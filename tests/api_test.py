@@ -1,9 +1,10 @@
+import sys
 import os
-from skynetapi import ObservationRequest
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-api_key = (os.getenv("SKYNET_API_KEY"))
-if not api_key:
-    raise ValueError("API key for Skynet is missing. Set it as an environment variable 'SKYNET_API_KEY'.")
-obs = ObservationRequest(token=api_key).get(obs_id=11794606)
+from skynetsoap.utils.skynet_api import SkynetAPI
+
+obs_id = 11794606
+obs = SkynetAPI().get(obs_id)
 
 print(obs.name)

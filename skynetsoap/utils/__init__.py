@@ -1,3 +1,3 @@
-from skynet_api import SkynetAPI
+from .skynet_api import SkynetAPI
 
 __all__ = ['SkynetAPI']

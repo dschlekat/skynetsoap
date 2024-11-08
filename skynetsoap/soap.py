@@ -1,7 +1,7 @@
-from models.observation import Observation
-from models.photometry import Photometry
-from models.plotter import Plotter
-from models.table import Table
+from .models.observation import Observation
+from .models.photometry import Photometry
+from .models.plotter import Plotter
+from .models.table import Table
 
 class Soap:
     def __init__(self, ra, dec, observation_id, calibrate=False):
