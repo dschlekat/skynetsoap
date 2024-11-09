@@ -4,7 +4,7 @@ from .models.plotter import Plotter
 from .models.table import Table
 
 class Soap:
-    def __init__(self, ra, dec, observation_id, calibrate=False):
+    def __init__(self, ra, dec, observation_id, calibrate=False, target_name=None):
         self.ra = ra
         self.dec = dec
         self.observation_id = observation_id
@@ -13,6 +13,8 @@ class Soap:
         self.table = None
         self.plotter = None
         self.calibrate = calibrate
+        self.calibrated = False
+        self.target_name = target_name
 
     def download_images(self):
         """Download images using the Skynet API."""
@@ -26,16 +28,16 @@ class Soap:
         print("Aperture photometry complete.")
 
         # Optional: Perform magnitude calibration if a catalog is provided
-        if self.catalog:
-            self.photometry.calibrate_magnitudes(self.catalog)
+        if self.calibrate:
+            self.photometry.calibrate_magnitudes()
             print("Magnitude calibration complete.")
 
-    def generate_table(self, filetype="csv"):
+    def generate_table(self, filetype="csv", path="soap_results/photometry_table"):
         """Generate and return a photometric table."""
         self.table = Table(self.photometry.results)
-        return self.table.create_table(filetype)
+        return self.table.create_table(filetype, path)
 
-    def generate_plot(self, units="flux", normalize=True):
+    def generate_plot(self, units="flux", path="soap_results/photometry_plot"):
         """Generate and return a flux vs time plot."""
         self.plotter = Plotter(self.photometry.results)
-        return self.plotter.plot_flux_vs_time(units=units, normalize=normalize)
+        return self.plotter.create_plot(units, path)
