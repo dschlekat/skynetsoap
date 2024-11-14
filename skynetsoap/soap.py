@@ -13,13 +13,16 @@ class Soap:
         self.table = None
         self.plotter = None
         self.calibrate = calibrate
-        self.calibrated = False
         self.target_name = target_name
 
     def download_images(self):
         """Download images using the Skynet API."""
-        self.observation.download_images()
-        print(f"Downloaded images for observation {self.observation_id}.")
+        name = self.observation.download_images()
+        if self.target_name is not None:
+            name = self.target_name
+        else:
+            self.target_name = name
+        print(f"Downloaded images for observation {self.observation_id} ({name}).")
 
     def perform_photometry(self):
         """Conduct aperture photometry on the downloaded images."""
