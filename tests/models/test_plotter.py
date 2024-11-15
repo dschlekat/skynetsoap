@@ -3,7 +3,7 @@ import os
 import sys
 import shutil
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from skynetsoap.models.plotter import Plotter
 
 class TestPlotter(unittest.TestCase):

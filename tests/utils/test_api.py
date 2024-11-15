@@ -1,7 +1,7 @@
 import sys
 import unittest
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from skynetsoap.utils.skynet_api import SkynetAPI
 
@@ -13,7 +13,7 @@ class TestSkynetAPI(unittest.TestCase):
         self.api = SkynetAPI()
 
     def test_get(self):
-        obs = self.api.get(obs_id)
+        obs = self.api.get_observation(obs_id)
         self.assertEqual(obs.id, obs_id)
         self.assertEqual(obs.name, obs_name)
 

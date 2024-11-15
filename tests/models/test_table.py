@@ -2,7 +2,7 @@ import unittest
 import sys
 import os
 import astropy.table as tbl
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from skynetsoap.models.table import Table
 
