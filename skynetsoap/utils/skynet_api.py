@@ -11,3 +11,13 @@ class SkynetAPI:
 
     def get_observation(self, observation_id):
         return self.observation_request.get(observation_id)
+    
+    def download_all_images(self, observation, path="soap_images/"):
+        filepaths = []
+        for exp in observation.exps:
+            filepaths += self.download_fits(exp.id, path=path)
+        return filepaths
+
+    def download_fits(self, observation_id, path="soap_images/"):
+        filepath = self.download_request.get_fits(out_dir=path, reducequiet=1, **{'image': f'r{observation_id}'})
+        return filepath

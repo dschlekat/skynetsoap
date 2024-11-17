@@ -1,7 +1,8 @@
 # VSCode
 .vscode/
 
-# Results
+# Results + Images
+soap_images/
 soap_results/
 
 # Byte-compiled / optimized / DLL files

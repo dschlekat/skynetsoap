@@ -8,9 +8,6 @@ class Table:
         
 
     def create_table(self, filetype, path="soap_results/photometry_table"):
-        if not os.path.exists("soap_results"):
-            os.makedirs("soap_results")
-        
         if filetype == "csv":
             return self.create_csv_table(path)
         elif filetype == "txt":

@@ -18,11 +18,7 @@ class Plotter:
         self.results = results
         self.units = units
 
-    def create_plot(self, path="soap_results/photometry_plot"):
-        if not os.path.exists("soap_results"):
-            os.makedirs("soap_results")
-        
-        
+    def create_plot(self, path="soap_results/photometry_plot"):       
         fig, ax = plt.subplots()
         ax.errorbar([result["mjd"] for result in self.results], 
                     [result[self.units] for result in self.results], 

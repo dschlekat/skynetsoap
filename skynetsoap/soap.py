@@ -1,3 +1,5 @@
+import os
+
 from .models.observation import Observation
 from .models.photometry import Photometry
 from .models.plotter import Plotter
@@ -14,6 +16,12 @@ class Soap:
         self.plotter = None
         self.calibrate = calibrate
         self.target_name = target_name
+
+        if not os.path.exists("soap_images"):
+            os.makedirs("soap_images")
+        if not os.path.exists("soap_results"):
+            os.makedirs("soap_results")
+
 
     def download_images(self):
         """Download images using the Skynet API."""
