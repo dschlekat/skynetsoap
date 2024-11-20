@@ -18,7 +18,8 @@ class SkynetAPI:
     def download_all_images(self, observation, path="soap_images/"):
         filepaths = []
         for exp in observation.exps:
-            filepaths += self.download_fits(exp.id, path=path)
+            filepath = self.download_fits(exp.id, path=path)
+            filepaths.append(filepath)
         return filepaths
 
     def download_fits(self, observation_id, path="soap_images/"):

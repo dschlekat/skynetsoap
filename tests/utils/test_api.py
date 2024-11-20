@@ -33,8 +33,7 @@ class TestSkynetAPI(unittest.TestCase):
     def test_download_all_images(self):
         obs = self.api.get_observation(obs_id)
         filepaths = self.api.download_all_images(obs)
-        num_files = len(os.listdir("soap_images"))
-        self.assertEqual(num_files, num_exps)
+        self.assertEqual(len(filepaths), num_exps)
     
 
 if __name__ == "__main__":
