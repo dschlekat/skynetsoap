@@ -3,6 +3,9 @@ from skynetapi import ObservationRequest, DownloadRequest
 
 class SkynetAPI:
     def __init__(self):
+        if not os.path.exists("soap_images"):
+            os.makedirs("soap_images")
+
         self.api_token = os.getenv("SKYNET_API_TOKEN")
         if not self.api_token:
             raise ValueError("API key for Skynet is missing. Set it as an environment variable 'SKYNET_API_TOKEN'.")
