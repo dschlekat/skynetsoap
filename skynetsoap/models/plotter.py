@@ -15,6 +15,9 @@ ylabel = {
 
 class Plotter:
     def __init__(self, results, units="flux"):
+        if not os.path.exists("soap_results"):
+            os.makedirs("soap_results")
+
         self.results = results
         self.units = units
 

@@ -2,12 +2,16 @@ import os
 
 class Table:
     def __init__(self, results, units="flux"):
+        if not os.path.exists("soap_results"):
+            os.makedirs("soap_results")
+
         self.results = results
         self.units = units
         self.unit_err = self.units + "_err"
         
 
     def create_table(self, filetype, path="soap_results/photometry_table"):
+        """Create a table from the photometry results given a filetype."""
         if filetype == "csv":
             return self.create_csv_table(path)
         elif filetype == "txt":
