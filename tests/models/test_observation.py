@@ -25,7 +25,8 @@ class TestObservation(unittest.TestCase):
     def test_download_images(self):
         obs = self.observation.get_obs()
         name = self.observation.download_images()
-        self.assertEqual(name, "lyra obs 0")
+        self.assertEqual(name, obs_name)
+        self.assertEqual(name, obs_name)
         self.assertTrue(os.path.exists("soap_images"))
         self.assertEqual(len(os.listdir("soap_images")), num_exps)
 

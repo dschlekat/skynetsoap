@@ -15,5 +15,10 @@ class Observation:
     
     def download_images(self):
         """Download the images for the desired observation."""
+        check = self.check_for_images()
         self.images = self.api.download_all_images(self.obs)
         return self.obs.name
+    
+    def check_for_images(self):
+        """Check for exsiting images"""
+        
