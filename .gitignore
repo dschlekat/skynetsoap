@@ -1,5 +1,6 @@
 # VSCode
 .vscode/
+.DS_Store
 
 # Results + Images
 soap_images/
