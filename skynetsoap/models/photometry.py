@@ -8,20 +8,21 @@ from photutils.aperture import aperture_photometry, ApertureStats, CircularApert
 from photutils.utils import calc_total_error
 sigma_clip = SigmaClip(sigma=3.0)
 bkg_estimator = MedianBackground()
-import tqdm
+from tqdm import tqdm
 
 # stop Astropy warnings
 import warnings
 from astropy.utils.exceptions import AstropyWarning
 warnings.simplefilter('ignore', category=AstropyWarning)
 
+# TODO: Add test
+# TODO: Implement magnitude calibration
+# TODO: Implement a better check for existing results
+# TODO: Look into changing Table to QTable to retain units
+# TODO: Implement variable aperture sizes
+
 class Photometry:
-    def __init__(self, ra, dec, images):
-        # if ra is in hms, convert to degrees
-        if isinstance(ra, str):
-            ra = np.degrees(float(ra.split()[0]) + float(ra.split()[1])/60 + float(ra.split()[2])/3600)
-        if isinstance(dec, str):
-            dec = np.degrees(float(dec.split()[0]) + float(dec.split()[1])/60 + float(dec.split()[2])/3600)
+    def __init__(self, ra, dec, images, path):
         self.target_ra = ra
         self.target_dec = dec
         self.images = images
@@ -40,12 +41,29 @@ class Photometry:
             'normalized_flux_err', 
             'magnitude', 
             'magnitude_err'
+        ), dtype=(
+            'U100', 
+            'U100', 
+            'U100', 
+            'f8',
+            'f8',
+            'f8',
+            'f8',
+            'f8',
+            'f8',
+            'f8',
+            'f8',
+            'f8',
+            'f8',
+            'f8'
         ))
+        self.path = path
 
 
     def open_fits(self, image):
         """Open an image using astropy."""
-        hdulist = fits.open(image)
+        img_path = f"{self.path}/{image}"
+        hdulist = fits.open(img_path)
         data = hdulist[0].data
         header = hdulist[0].header
         hdulist.close()
@@ -53,11 +71,52 @@ class Photometry:
     
     def calibrate_magnitudes(self):
         """Calibrate magnitudes using a catalog."""
+        # TODO: Implement
+        return
+    
+    def check_for_results(self):
+        """Check if results already exist."""
+        if len(self.results) > 0:
+            return True
+        # elif # FIXME: Pickle check
+        #     return False
+        else:
+            return False
+
+    def normalize_flux(self):
+        # Create a lightcurve using the table data
+        mjd = self.results['mjd']
+        mjd_first = np.min(mjd)
+
+        flux = self.results['flux']
+        flux_err = self.results['flux_err']
+
+        # create time from seconds since the first observation
+        days_since = mjd - mjd_first
+        seconds_since = days_since * 86400
+
+        # Normalize the flux
+        normalized_flux = flux / np.median(flux)
+        normalized_flux_err = flux_err / np.median(flux)
+
+        self.results['normalized_flux'] = normalized_flux
+        self.results['normalized_flux_err'] = normalized_flux_err
+        self.results['time_since_start'] = seconds_since
+        return
+    
+    def sort_results(self):
+        """Sort the results by MJD."""
+        self.results.sort('mjd')
         return
     
     def run_pipeline(self):
         """Run aperture photometry on the downloaded images."""
-        loop = tqdm.tqdm(self.images)
+        check = self.check_for_results()
+        if check:
+            print('Results already exist')
+            return
+
+        loop = tqdm(self.images)
         for image in loop:
             try:
                 data, header = self.open_fits(image)
@@ -100,11 +159,12 @@ class Photometry:
                 header['TELESCOP'], 
                 header['FILTER'], 
                 header['EXPTIME'], 
-                mjd, 
+                mjd,
+                None, 
                 xtarg, 
                 ytarg, 
-                target_photometry['aperture_sum_bkgsub'][0], 
-                error[0], 
+                target_photometry['aperture_sum_bkgsub'], 
+                target_photometry['aperture_sum_err'], 
                 None, 
                 None, 
                 None, 
@@ -112,30 +172,5 @@ class Photometry:
             ])
 
         self.normalize_flux()
+        self.sort_results()
         return
-    
-    def normalize_flux(self):
-        # Create a lightcurve using the table data
-        cleaned_table = self.results[~np.isnan(self.results['flux'])]
-        mjd_first = np.min(cleaned_table['mjd'].data)
-
-        flux = cleaned_table['flux'].data
-        flux_err = cleaned_table['flux error'].data
-        mjd = cleaned_table['mjd'].data
-
-        # create time from seconds since the first observation
-        days_since = mjd - mjd_first
-        seconds_since = days_since * 86400
-
-        # Normalize the flux
-        normalized_flux = flux / np.median(flux)
-        normalized_flux_err = flux_err / np.median(flux)
-
-        self.results['normalized_flux'] = normalized_flux
-        self.results['normalized_flux_err'] = normalized_flux_err
-        self.results['time_since_start'] = seconds_since
-        return
-
-    
-    
-            
