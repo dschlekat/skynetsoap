@@ -30,7 +30,7 @@ class Observation:
     def check_for_images(self, path):
         """Check for exsiting images"""
         if os.path.exists(path):
-            if len(os.listdir(path)) > 0:
+            if len(os.listdir(path)) > 0: #FIXME needs to be more sophisticated
                 return True
             else:
                 return False

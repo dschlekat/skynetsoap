@@ -1,3 +1,4 @@
+from astropy.table import Table as tbl
 import os
 
 class Table:
@@ -12,7 +13,9 @@ class Table:
 
     def create_table(self, filetype, path="soap_results/"):
         """Create a table from the photometry results given a filetype."""
-        if filetype == "csv":
+        if filetype == "astropy":
+            return self.create_astropy_table(path)
+        elif filetype == "csv":
             return self.create_csv_table(path)
         elif filetype == "txt":
             return self.create_txt_table(path)
@@ -21,12 +24,19 @@ class Table:
         else:
             raise ValueError("Invalid filetype. Please specify 'csv' or 'txt'.")
         
+    def create_astropy_table(self, path):
+        """Create an Astropy table from the photometry results."""
+        table = tbl(self.results)
+        filepath = f"{path}astropy_table.ecsv"
+        table.write(filepath, format="ascii.ecsv", overwrite=True)
+        return filepath
+        
     def create_csv_table(self, path):
         """Create a CSV table from the photometry results."""
         table = f"mjd,{self.units},error\n"
         for result in self.results:
             table += f"{result['mjd']},{result[self.units]},{result[self.unit_err]}\n"
-        filepath = f"{path}/photometry_table.csv"
+        filepath = f"{path}photometry_table.csv"
         with open(filepath, "w") as f:
             f.write(table)
         return 
@@ -36,7 +46,7 @@ class Table:
         table = f"mjd\t{self.units}\terror\n"
         for result in self.results:
             table += f"{result['mjd']}\t{result[self.units]}\t{result[self.unit_err]}\n"
-        filepath = f"{path}/photometry_table.txt"
+        filepath = f"{path}photometry_table.txt"
         with open(filepath, "w") as f:
             f.write(table)
         return 
@@ -79,13 +89,14 @@ class Table:
             rows.append([time_str, telescope, filter_name, exp_len, magnitude, mag_error])
         
         # Write to file with formatted spacing
-        filepath = f"{path}/gcn_table.txt"
+        name = "gcn_table"
         if start_time is not None:
-            #append start to the file name before .txt
-            filepath = f"{path}/gcn_table_start.txt"
+            #append start to the file name
+            name += "_start"
         if all_results:
-            #append all to the file name before .txt
-            filepath = f"{path}/gcn_table_all.txt"
+            #append all to the file name
+            name += "_all"
+        filepath = f"{path}{name}.txt"
         
         with open(filepath, "w") as file:
             file.write(header + "\n")

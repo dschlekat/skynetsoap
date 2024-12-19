@@ -1,3 +1,5 @@
+from astropy.coordinates import SkyCoord
+from astropy import units as u
 import os
 
 from .models.observation import Observation
@@ -6,28 +8,16 @@ from .models.plotter import Plotter
 from .models.table import Table
 
 class Soap:
-    def __init__(self, ra, dec, observation_id, target_name, calibrate=False, image_dir="soap_images", result_dir="soap_results", pickle=True):
-        if isinstance(ra, str):
-            try: 
-                if ":" in ra:
-                    ra = float(ra.split(":")[0])*15 + float(ra.split(":")[1])/4 + float(ra.split(":")[2])/240
-                elif " " in ra:
-                    ra = float(ra.split(" ")[0])*15 + float(ra.split(" ")[1])/4 + float(ra.split(" ")[2])/240
-                else:
-                    raise ValueError
-            except:
-                pass
-        if isinstance(dec, str):
+    def __init__(self, ra, dec, observation_id, target_name, calibrate=False, image_dir="soap_images", result_dir="soap_results"):
+        # if ra and dec are in hms and dms format, convert to degrees using astropy
+        if isinstance(ra, str) and isinstance(dec, str):
             try:
-                if ":" in dec:
-                    dec = float(dec.split(":")[0]) + float(dec.split(":")[1])/60 + float(dec.split(":")[2])/3600
-                elif " " in dec:
-                    dec = float(dec.split(" ")[0]) + float(dec.split(" ")[1])/60 + float(dec.split(" ")[2])/3600
-                else:
-                    raise ValueError
+                c = SkyCoord(ra=ra, dec=dec, unit=(u.hourangle, u.deg))
+                ra = c.ra.deg
+                dec = c.dec.deg
             except:
-                pass
-        
+                raise ValueError("Invalid RA and Dec format. Please provide as degrees or hms/dms strings.")
+
         self.ra = ra
         self.dec = dec
         self.observation_id = observation_id
@@ -38,8 +28,8 @@ class Soap:
         self.plotter = None
         self.calibrate = calibrate
 
-        self.img_path = f"{image_dir}/{target_name}"
-        self.res_path = f"{result_dir}/{target_name}"
+        self.img_path = f"{image_dir}/{target_name}_{observation_id}/"
+        self.res_path = f"{result_dir}/{target_name}_{observation_id}/"
 
         if not os.path.exists(image_dir):
             os.makedirs(image_dir)
@@ -59,7 +49,7 @@ class Soap:
 
     def photometry_pipeline(self):
         """Conduct aperture photometry on the downloaded images."""
-        self.photometry = Photometry(self.ra, self.dec, self.observation.images, self.img_path)
+        self.photometry = Photometry(self.ra, self.dec, self.observation.images, self.img_path, self.res_path)
         self.photometry.run_pipeline()
         print("Aperture photometry complete.")
 
@@ -71,13 +61,13 @@ class Soap:
     def generate_table(self, filetype="csv"):
         """Generate and return a photometric table."""
         self.table = Table(self.photometry.results)
-        print(f"Table saved to {self.res_path}.")
+        print(f"Table saved to {self.res_path}")
         return self.table.create_table(filetype, self.res_path)
 
     def generate_plot(self, units="flux"):
         """Generate and return a flux vs time plot."""
         self.plotter = Plotter(self.photometry.results, units=units)
-        print(f"Plot saved to {self.res_path}.")
+        print(f"Plot saved to {self.res_path}")
         return self.plotter.create_plot(self.res_path)
     
     def calibrate_magnitudes(self):

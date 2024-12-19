@@ -6,6 +6,7 @@ import numpy as np
 from photutils.background import Background2D, MedianBackground
 from photutils.aperture import aperture_photometry, ApertureStats, CircularAperture, CircularAnnulus
 from photutils.utils import calc_total_error
+import os
 sigma_clip = SigmaClip(sigma=3.0)
 bkg_estimator = MedianBackground()
 from tqdm import tqdm
@@ -22,12 +23,13 @@ warnings.simplefilter('ignore', category=AstropyWarning)
 # TODO: Implement variable aperture sizes
 
 class Photometry:
-    def __init__(self, ra, dec, images, path):
+    def __init__(self, ra, dec, images, img_dir, res_dir):
         self.target_ra = ra
         self.target_dec = dec
         self.images = images
         self.results = tbl.Table(names=(
-            'image', 
+            'exp_number',
+            'exp_name',            
             'telescope', 
             'filter', 
             'exp_len', 
@@ -42,6 +44,7 @@ class Photometry:
             'magnitude', 
             'magnitude_err'
         ), dtype=(
+            'i8',
             'U100', 
             'U100', 
             'U100', 
@@ -57,12 +60,13 @@ class Photometry:
             'f8',
             'f8'
         ))
-        self.path = path
+        self.img_dir = img_dir
+        self.res_dir = res_dir
 
 
     def open_fits(self, image):
         """Open an image using astropy."""
-        img_path = f"{self.path}/{image}"
+        img_path = f"{self.img_dir}/{image}"
         hdulist = fits.open(img_path)
         data = hdulist[0].data
         header = hdulist[0].header
@@ -78,8 +82,8 @@ class Photometry:
         """Check if results already exist."""
         if len(self.results) > 0:
             return True
-        # elif # FIXME: Pickle check
-        #     return False
+        elif os.path.exists(f"{self.res_dir}/astropy_table.ecsv"): #FIXME needs to be more sophisticated
+            return True
         else:
             return False
 
@@ -107,6 +111,7 @@ class Photometry:
     def sort_results(self):
         """Sort the results by MJD."""
         self.results.sort('mjd')
+        self.results['exp_number'] = np.arange(1, len(self.results)+1)
         return
     
     def run_pipeline(self):
@@ -155,6 +160,7 @@ class Photometry:
 
             # Save the data
             self.results.add_row([
+                0,
                 image, 
                 header['TELESCOP'], 
                 header['FILTER'], 

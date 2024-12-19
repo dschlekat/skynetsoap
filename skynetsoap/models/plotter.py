@@ -31,5 +31,5 @@ class Plotter:
         ax.set_title(title[self.units])
         ax.set_xlabel("MJD")
         ax.set_ylabel(ylabel[self.units])
-        plt.savefig(f"{path}/{self.units}_plot.png") 
+        plt.savefig(f"{path}{self.units}_plot.png") 
         return
