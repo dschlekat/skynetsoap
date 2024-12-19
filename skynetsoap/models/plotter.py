@@ -13,6 +13,12 @@ ylabel = {
     "magnitude": "Magnitude"
 }
 
+error = {
+    "flux": "flux_err",
+    "normalized_flux": "normalized_flux_err",
+    "magnitude": "magnitude_err"
+}
+
 class Plotter:
     def __init__(self, results, units="flux"):
         if not os.path.exists("soap_results"):
@@ -25,7 +31,7 @@ class Plotter:
         fig, ax = plt.subplots()
         ax.errorbar([result["mjd"] for result in self.results], 
                     [result[self.units] for result in self.results], 
-                    yerr=[result["error"] for result in self.results], 
+                    yerr=[result[error[self.units]] for result in self.results], 
                     fmt='o')
         ax.set_title(title[self.units])
         ax.set_xlabel("MJD")

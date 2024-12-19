@@ -9,9 +9,9 @@ from skynetsoap.models.plotter import Plotter
 class TestPlotter(unittest.TestCase):
     def setUp(self):
         self.results = [
-            {"mjd": 59000, "flux": 1.0, "normalized_flux": 0.9, "magnitude": 15.0, "error": 0.1},
-            {"mjd": 59001, "flux": 1.1, "normalized_flux": 0.95, "magnitude": 14.9, "error": 0.1},
-            {"mjd": 59002, "flux": 0.9, "normalized_flux": 0.85, "magnitude": 15.1, "error": 0.1}
+            {"mjd": 59000, "flux": 10.0, "flux_err": 0.03, "normalized_flux": 0.9, "normalized_flux_err": 0.03, "magnitude": 15.0, "magnitude_err": 0.03 },
+            {"mjd": 59001, "flux": 10.1, "flux_err": 0.03, "normalized_flux": 0.95, "normalized_flux_err": 0.03, "magnitude": 14.9, "magnitude_err": 0.03 },
+            {"mjd": 59002, "flux": 9.9, "flux_err": 0.03, "normalized_flux": 0.85, "normalized_flux_err": 0.03, "magnitude": 15.1, "magnitude_err": 0.03 }
         ]
         self.plotter = Plotter(self.results)
 
