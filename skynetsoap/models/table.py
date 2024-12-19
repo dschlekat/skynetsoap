@@ -10,7 +10,7 @@ class Table:
         self.unit_err = self.units + "_err"
         
 
-    def create_table(self, filetype, path="soap_results/photometry_table"):
+    def create_table(self, filetype, path="soap_results/"):
         """Create a table from the photometry results given a filetype."""
         if filetype == "csv":
             return self.create_csv_table(path)
@@ -26,7 +26,7 @@ class Table:
         table = f"mjd,{self.units},error\n"
         for result in self.results:
             table += f"{result['mjd']},{result[self.units]},{result[self.unit_err]}\n"
-        filepath = f"{path}.csv"
+        filepath = f"{path}/photometry_table.csv"
         with open(filepath, "w") as f:
             f.write(table)
         return 
@@ -36,12 +36,12 @@ class Table:
         table = f"mjd\t{self.units}\terror\n"
         for result in self.results:
             table += f"{result['mjd']}\t{result[self.units]}\t{result[self.unit_err]}\n"
-        filepath = f"{path}.txt"
+        filepath = f"{path}/photometry_table.txt"
         with open(filepath, "w") as f:
             f.write(table)
         return 
     
-    def create_gcn_table(self, path="soap_results/gcn_table.txt", start_time=None, all_results=False):
+    def create_gcn_table(self, path="soap_results/", start_time=None, all_results=False):
         """Create a GCN-formatted table from the photometry results."""
         
         # Adjust header based on start_time
@@ -79,9 +79,17 @@ class Table:
             rows.append([time_str, telescope, filter_name, exp_len, magnitude, mag_error])
         
         # Write to file with formatted spacing
-        with open(path, "w") as file:
+        filepath = f"{path}/gcn_table.txt"
+        if start_time is not None:
+            #append start to the file name before .txt
+            filepath = f"{path}/gcn_table_start.txt"
+        if all_results:
+            #append all to the file name before .txt
+            filepath = f"{path}/gcn_table_all.txt"
+        
+        with open(filepath, "w") as file:
             file.write(header + "\n")
             for row in rows:
                 file.write("{:<14} | {:<9} | {:<6} | {:<17} | {:<7} | {:<9}\n".format(*row))
 
-        print(f"GCN table saved to {path}")
+        print(f"GCN table saved to {filepath}")

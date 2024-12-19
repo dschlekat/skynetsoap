@@ -62,7 +62,7 @@ class TestTable(unittest.TestCase):
 
     def test_create_gcn_table_with_start_time(self):
         start_time = 59000.0
-        self.table.create_gcn_table(path="soap_results/gcn_table_start.txt", start_time=start_time, all_results=False)
+        self.table.create_gcn_table(start_time=start_time, all_results=False)
         self.assertTrue(os.path.exists("soap_results/gcn_table_start.txt"))
 
         with open("soap_results/gcn_table_start.txt", "r") as f:
@@ -78,7 +78,7 @@ class TestTable(unittest.TestCase):
 
     def test_create_gcn_table_all_results(self):
         # Test including all results (all_results=True)
-        self.table.create_gcn_table(path="soap_results/gcn_table_all.txt", start_time=None, all_results=True)
+        self.table.create_gcn_table(start_time=None, all_results=True)
         self.assertTrue(os.path.exists("soap_results/gcn_table_all.txt"))
 
         with open("soap_results/gcn_table_all.txt", "r") as f:

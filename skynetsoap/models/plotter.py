@@ -13,12 +13,6 @@ ylabel = {
     "magnitude": "Magnitude"
 }
 
-error = {
-    "flux": "flux_err",
-    "normalized_flux": "normalized_flux_err",
-    "magnitude": "magnitude_err"
-}
-
 class Plotter:
     def __init__(self, results, units="flux"):
         if not os.path.exists("soap_results"):
@@ -26,15 +20,16 @@ class Plotter:
 
         self.results = results
         self.units = units
+        self.unit_err = self.units + "_err"
 
-    def create_plot(self, path="soap_results/photometry_plot"):       
+    def create_plot(self, path="soap_results/"):       
         fig, ax = plt.subplots()
         ax.errorbar([result["mjd"] for result in self.results], 
                     [result[self.units] for result in self.results], 
-                    yerr=[result[error[self.units]] for result in self.results], 
+                    yerr=[result[self.unit_err] for result in self.results], 
                     fmt='o')
         ax.set_title(title[self.units])
         ax.set_xlabel("MJD")
         ax.set_ylabel(ylabel[self.units])
-        plt.savefig(f"{path}.png") 
+        plt.savefig(f"{path}/{self.units}_plot.png") 
         return
