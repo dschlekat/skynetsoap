@@ -16,6 +16,7 @@ import warnings
 from astropy.utils.exceptions import AstropyWarning
 warnings.simplefilter('ignore', category=AstropyWarning)
 
+# DONE: Needs to collect existing results and add to self.results
 # FIXME: Fix normalized flux to normalize for each filter, not all filters
 # TODO: Add test
 # TODO: Implement magnitude calibration
@@ -124,8 +125,7 @@ class Photometry:
         check = self.check_for_results()
         if check:
             print('Results already exist, reading from file.')
-            # FIXME: Needs to collect existing results and add to self.results
-
+            self.results = tbl.Table.read(f"{self.res_dir}/astropy_table.ecsv")
             return
 
         loop = tqdm(self.images)
