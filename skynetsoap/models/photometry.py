@@ -1,6 +1,6 @@
 import astropy.io.fits as fits
 import astropy.table as tbl
-from astropy.stats import SigmaClip, mad_std
+from astropy.stats import SigmaClip
 import astropy.wcs as awcs
 import numpy as np
 from photutils.background import Background2D, MedianBackground
@@ -16,6 +16,7 @@ import warnings
 from astropy.utils.exceptions import AstropyWarning
 warnings.simplefilter('ignore', category=AstropyWarning)
 
+# FIXME: Fix normalized flux to normalize for each filter, not all filters
 # TODO: Add test
 # TODO: Implement magnitude calibration
 # TODO: Implement a better check for existing results
@@ -92,19 +93,23 @@ class Photometry:
         mjd = self.results['mjd']
         mjd_first = np.min(mjd)
 
-        flux = self.results['flux']
-        flux_err = self.results['flux_err']
-
         # create time from seconds since the first observation
         days_since = mjd - mjd_first
         seconds_since = days_since * 86400
 
-        # Normalize the flux
-        normalized_flux = flux / np.median(flux)
-        normalized_flux_err = flux_err / np.median(flux)
+        # Normalize flux by filter
+        filters = np.unique(self.results['filter'])
+        for filter in filters:
+            mask = self.results['filter'] == filter
+            flux = self.results['flux'][mask]
+            flux_err = self.results['flux_err'][mask]
 
-        self.results['normalized_flux'] = normalized_flux
-        self.results['normalized_flux_err'] = normalized_flux_err
+            normalized_flux = flux / np.median(flux)
+            normalized_flux_err = flux_err / np.median(flux)
+
+            self.results['normalized_flux'][mask] = normalized_flux
+            self.results['normalized_flux_err'][mask] = normalized_flux_err
+        
         self.results['time_since_start'] = seconds_since
         return
     
@@ -118,7 +123,9 @@ class Photometry:
         """Run aperture photometry on the downloaded images."""
         check = self.check_for_results()
         if check:
-            print('Results already exist')
+            print('Results already exist, reading from file.')
+            # FIXME: Needs to collect existing results and add to self.results
+
             return
 
         loop = tqdm(self.images)

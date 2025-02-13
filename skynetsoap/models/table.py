@@ -1,4 +1,6 @@
 from astropy.table import Table as tbl
+from astropy.time import Time, TimeDelta
+from .result import Result 
 import os
 
 class Table:
@@ -11,8 +13,10 @@ class Table:
         self.unit_err = self.units + "_err"
         
 
-    def create_table(self, filetype, path="soap_results/"):
+    def create_table(self, filetype, path="soap_results/", after=None, before=None, days_ago=None):
         """Create a table from the photometry results given a filetype."""
+        self.results = self.filter_by_date(after, before, days_ago)
+
         if filetype == "astropy":
             return self.create_astropy_table(path)
         elif filetype == "csv":
@@ -104,3 +108,20 @@ class Table:
                 file.write("{:<14} | {:<9} | {:<6} | {:<17} | {:<7} | {:<9}\n".format(*row))
 
         print(f"GCN table saved to {filepath}")
+        return
+
+    def filter_by_date(self, after=None, before=None, days_ago=None):
+        """Filter results by date."""
+        if days_ago is not None:
+            if after is not None or before is not None:
+                raise ValueError("Please specify either 'days_ago' or 'after'/'before'.")
+            after = Time.now(format='mjd') - TimeDelta(days_ago, format='jd')
+
+        if after is not None:
+            after = Time(after).mjd
+            self.results = self.results[self.results["mjd"] > after]
+        if before is not None:
+            before = Time(before).mjd
+            self.results = self.results[self.results["mjd"] < before]
+        return self.results
+    

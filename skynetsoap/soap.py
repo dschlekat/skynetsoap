@@ -8,7 +8,7 @@ from .models.plotter import Plotter
 from .models.table import Table
 
 class Soap:
-    def __init__(self, ra, dec, observation_id, target_name, calibrate=False, image_dir="soap_images", result_dir="soap_results"):
+    def __init__(self, ra, dec, observation_id, target_name, image_dir="soap_images", result_dir="soap_results"):
         # if ra and dec are in hms and dms format, convert to degrees using astropy
         if isinstance(ra, str) and isinstance(dec, str):
             try:
@@ -26,7 +26,7 @@ class Soap:
         self.photometry = None
         self.table = None
         self.plotter = None
-        self.calibrate = calibrate
+        self.calibrated = False
 
         self.img_path = f"{image_dir}/{target_name}_{observation_id}/"
         self.res_path = f"{result_dir}/{target_name}_{observation_id}/"
@@ -41,10 +41,10 @@ class Soap:
             os.makedirs(self.res_path)
 
 
-    def download_images(self):
+    def download_images(self, after=None, before=None, days_ago=None):
         """Download images using the Skynet API."""
         self.observation.get_obs()
-        name = self.observation.download_images(path=self.img_path)
+        name = self.observation.download_images(path=self.img_path, after=after, before=before, days_ago=days_ago)
         print(f"Downloaded images for Skynet Observation {self.observation_id} ({name}).")
 
     def photometry_pipeline(self):
@@ -54,36 +54,28 @@ class Soap:
         print("Aperture photometry complete.")
 
         # Optional: Perform magnitude calibration if a catalog is provided
-        if self.calibrate:
+        if self.calibrated:
             self.photometry.calibrate_magnitudes()
             print("Magnitude calibration complete.")
 
-    def generate_table(self, filetype="csv"):
+    def generate_table(self, filetype="csv", units="flux", after=None, before=None, days_ago=None):
         """Generate and return a photometric table."""
-        self.table = Table(self.photometry.results)
+        self.table = Table(self.photometry.results, units=units)
         print(f"Table saved to {self.res_path}")
-        return self.table.create_table(filetype, self.res_path)
+        return self.table.create_table(filetype=filetype, path=self.res_path, after=after, before=before, days_ago=days_ago)
 
-    def generate_plot(self, units="flux"):
+    def generate_plot(self, units="flux", after=None, before=None, days_ago=None):
         """Generate and return a flux vs time plot."""
         self.plotter = Plotter(self.photometry.results, units=units)
         print(f"Plot saved to {self.res_path}")
-        return self.plotter.create_plot(self.res_path)
+        return self.plotter.create_plot(path=self.res_path, after=after, before=before, days_ago=days_ago)
     
     def calibrate_magnitudes(self):
         """Calibrate magnitudes using a catalog."""
-        if self.calibrate:
+        if self.calibrated:
             print("Magnitude calibration already complete.")
         else:
-            self.calibrate = True
             self.photometry.calibrate_magnitudes()
             print("Magnitude calibration complete.")
+            self.calibrated = True
         return
-    
-    def run_all(self, units="flux", filetype="csv"):
-        """Run the entire SOAP pipeline."""
-        self.download_images()
-        self.photometry_pipeline()
-        self.generate_table(filetype=filetype)
-        self.generate_plot(units=units)
-        print("SOAP pipeline complete.")

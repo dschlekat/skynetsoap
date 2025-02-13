@@ -16,7 +16,7 @@ class Observation:
         self.obs = self.api.get_observation(self.observation_id)
         return self.obs.name
     
-    def download_images(self, path="soap_images/"):
+    def download_images(self, path="soap_images/", after=None, before=None, days_ago=None):
         """Download the images for the desired observation."""
         check = self.check_for_images(path=path)
         if check: 
@@ -24,7 +24,7 @@ class Observation:
             self.images = os.listdir(path)
             return self.obs.name
         else:
-            self.images = self.api.download_all_images(self.obs, path=path)
+            self.images = self.api.download_images(self.obs, path=path, after=after, before=before, days_ago=days_ago)
             return self.obs.name
     
     def check_for_images(self, path):
@@ -36,6 +36,3 @@ class Observation:
                 return False
         else:
             return False
-
-
-        
