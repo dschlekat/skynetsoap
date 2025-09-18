@@ -1,14 +1,32 @@
-from astropy.coordinates import SkyCoord
-from astropy import units as u
 import os
 
+from astropy.coordinates import SkyCoord
+from astropy import units as u
+
+from .models.limiting_magnitude import LimitingMagnitude
 from .models.observation import Observation
 from .models.photometry import Photometry
 from .models.plotter import Plotter
+from .models.result import Result
 from .models.table import Table
 
+# TODO: Check if RA/Dec are in the field of observation before downloading
+
 class Soap:
-    def __init__(self, ra, dec, observation_id, target_name, image_dir="soap_images", result_dir="soap_results"):
+    def __init__(
+            self, 
+            ra, 
+            dec, 
+            observation_id, 
+            target_name,
+            forced_photometry=False,
+            aperture_radius=6,
+            inner_annulus_radius=12,
+            outer_annulus_radius=18,
+            comparison_snr=10,
+            image_dir="soap_images",
+            result_dir="soap_results"
+        ):
         # if ra and dec are in hms and dms format, convert to degrees using astropy
         if isinstance(ra, str) and isinstance(dec, str):
             try:
@@ -17,7 +35,13 @@ class Soap:
                 dec = c.dec.deg
             except:
                 raise ValueError("Invalid RA and Dec format. Please provide as degrees or hms/dms strings.")
-
+        if isinstance(ra, (int, float)) and isinstance(dec, (int, float)):
+            try: 
+                c = SkyCoord(ra=ra*u.deg, dec=dec*u.deg)
+                ra = c.ra.deg
+                dec = c.dec.deg
+            except:
+                raise ValueError("Invalid RA and Dec format. Please provide as decimal degrees or hms/dms strings.")
         self.ra = ra
         self.dec = dec
         self.observation_id = observation_id
@@ -26,7 +50,6 @@ class Soap:
         self.photometry = None
         self.table = None
         self.plotter = None
-        self.calibrated = False
 
         self.img_path = f"{image_dir}/{target_name}_{observation_id}/"
         self.res_path = f"{result_dir}/{target_name}_{observation_id}/"

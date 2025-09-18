@@ -5,6 +5,7 @@ class Result:
     def __init__(self):
         self.results = tbl.Table(names=(
                 'exp_number',
+                'src_number'
                 'exp_name',            
                 'telescope', 
                 'filter', 
@@ -15,11 +16,13 @@ class Result:
                 'ycenter', 
                 'flux', 
                 'flux_err', 
-                'normalized_flux', 
-                'normalized_flux_err', 
                 'magnitude', 
-                'magnitude_err'
+                'magnitude_err',
+                'absolute_magnitude',
+                'absolute_magnitude_err',
+                'image_depth',
             ), dtype=(
+                'i8',
                 'i8',
                 'U100', 
                 'U100', 
@@ -34,7 +37,8 @@ class Result:
                 'f8',
                 'f8',
                 'f8',
-                'f8'
+                'f8',
+                'f8',
             ))
         
     def add_result(self, result):
