@@ -2,11 +2,6 @@
 .vscode/
 .DS_Store
 
-# Download and CS test scripts
-grb**.py
-cs**.py
-**_dl.py
-
 # Results, images, and cache
 soap_images/
 soap_results/

@@ -8,8 +8,8 @@ min_area = 5             # Minimum number of connected pixels for a detection
 mode = "fwhm_scaled"     # "fwhm_scaled", "optimal", or "fixed"
 scale = 2.5              # Multiplier for FWHM-scaled aperture
 fixed_radius = 5.0       # Radius in pixels for fixed mode
-min_radius = 3.0         # Minimum aperture radius in pixels
-max_radius = 20.0        # Maximum aperture radius in pixels
+min_radius = 2.0         # Minimum aperture radius in pixels
+max_radius = 10.0        # Maximum aperture radius in pixels
 step = 0.5               # Step size for optimal aperture search
 
 [calibration]
@@ -21,11 +21,11 @@ merge_tolerance_arcsec = 2.0  # Tolerance for merging duplicate catalog entries
 
 [forced_photometry]
 enabled = false          # Whether to perform forced photometry for non-detections
-snr_threshold = 3.0      # Minimum SNR for forced photometry measurements
+snr_threshold = 5.0      # Minimum SNR for forced photometry measurements
 
 [astrometry]
 enabled = false          # Whether to attempt astrometric solving
-timeout = 120            # Timeout in seconds for astrometry.net solver
+timeout = 500            # Timeout in seconds for astrometry.net solver
 
 [logging]
 level = "WARNING"        # Default logging level
