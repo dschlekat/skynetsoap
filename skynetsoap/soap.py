@@ -347,6 +347,7 @@ class Soap:
                 sigma_bkg=bkg_result.global_rms,
                 sigma_zp=zp_err,
             )
+            cal_mag_err = np.atleast_1d(cal_mag_err)
             n_cal = int(np.sum(match_mask)) if match_mask is not None else 0
 
         snr = flux / flux_err
