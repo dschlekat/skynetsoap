@@ -7,9 +7,10 @@ grb**.py
 cs**.py
 **_dl.py
 
-# Results + Images
+# Results, images, and cache
 soap_images/
 soap_results/
+.soap_cache/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
