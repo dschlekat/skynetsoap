@@ -1,5 +1,5 @@
 # Filter definitions and transformation coefficients
-# Transformations from Jordi, Grebel & Ammon (2006), A&A 460, 339
+# Transformations from Jordi, Grebel & Ammon (2006), A&A 460, 339 & from Tonry et al. (2012), ApJ 750, 99
 
 [systems.johnson_cousins]
 name = "Johnson-Cousins"
@@ -9,7 +9,15 @@ bands = ["U", "B", "V", "R", "I"]
 name = "SDSS/ugriz"
 bands = ["u", "g", "r", "i", "z"]
 
-# Aliases map common FITS header filter names to canonical band names
+[systems.panstarrs]
+name = "Pan-STARRS1"
+bands = ["g", "r", "i", "z"]
+
+[systems.apass]
+name = "APASS"
+bands = ["B", "V", "g", "r", "i"]
+
+# Aliases map common FITS header filter names and catalog column names to canonical band names
 [aliases]
 "Open" = "Open"
 "uprime" = "u"
@@ -73,3 +81,140 @@ sigma_b = 0.001
 formula = "color_plus_offset"
 source_bands = ["i", "z"]
 description = "I from i + a*(i-z) + b"
+
+# Transformations between Pan-STARRS1 and SDSS from Tonry et al. (2012), ApJ 750, 99 (linear form)
+
+[transforms.sdss_to_panstarrs.g]
+a = -0.139
+sigma_a = 0.007
+b = -0.012
+sigma_b = 0.007
+formula = "color_plus_offset"
+source_bands = ["g", "r"]
+description = "g_P1 from g_SDSS + a*(g-r) + b"
+
+[transforms.sdss_to_panstarrs.r]
+a = -0.007
+sigma_a = 0.002
+b = 0.000
+sigma_b = 0.002
+formula = "color_plus_offset"
+source_bands = ["r", "g"]
+description = "r_P1 from r_SDSS + a*(r-g) + b"
+
+[transforms.sdss_to_panstarrs.i]
+a = -0.014
+sigma_a = 0.003
+b = 0.004
+sigma_b = 0.003
+formula = "color_plus_offset"
+source_bands = ["i", "g"]
+description = "i_P1 from i_SDSS + a*(i-g) + b"
+
+[transforms.sdss_to_panstarrs.z]
+a = 0.039
+sigma_a = 0.009
+b = -0.013
+sigma_b = 0.009
+formula = "color_plus_offset"
+source_bands = ["z", "g"]
+description = "z_P1 from z_SDSS + a*(z-g) + b"
+
+[transforms.panstarrs_to_sdss.g]
+a = 0.162
+sigma_a = 0.007
+b = 0.014
+sigma_b = 0.007
+formula = "color_plus_offset"
+source_bands = ["g", "r"]
+description = "g_SDSS from g_P1 + a*(g-r) + b"
+
+[transforms.panstarrs_to_sdss.r]
+a = 0.011
+sigma_a = 0.002
+b = -0.001
+sigma_b = 0.002
+formula = "color_plus_offset"
+source_bands = ["r", "g"]
+description = "r_SDSS from r_P1 + a*(r-g) + b"
+
+[transforms.panstarrs_to_sdss.i]
+a = 0.020
+sigma_a = 0.003
+b = -0.004
+sigma_b = 0.003
+formula = "color_plus_offset"
+source_bands = ["i", "g"]
+description = "i_SDSS from i_P1 + a*(i-g) + b"
+
+[transforms.panstarrs_to_sdss.z]
+a = -0.050
+sigma_a = 0.009
+b = 0.013
+sigma_b = 0.009
+formula = "color_plus_offset"
+source_bands = ["z", "g"]
+description = "z_SDSS from z_P1 + a*(z-g) + b"
+
+[transforms.sdss_to_apass.B]
+a = 0.39
+sigma_a = 0.03
+b = 0.21
+sigma_b = 0.03
+formula = "color_plus_offset"
+source_bands = ["g", "r"]
+description = "B from g + a*(g-r) + b"
+
+[transforms.sdss_to_apass.V]
+a = -0.59
+sigma_a = 0.01
+b = -0.01
+sigma_b = 0.01
+formula = "color_plus_offset"
+source_bands = ["g", "r"]
+description = "V from g + a*(g-r) + b"
+
+[transforms.apass_to_sdss.g]
+a = -0.60
+sigma_a = 0.02
+b = -0.12
+sigma_b = 0.02
+formula = "color_plus_offset"
+source_bands = ["V", "B"]
+description = "g from V + 0.60*(B-V) - 0.12"
+
+[transforms.apass_to_sdss.r]
+a = 0.42
+sigma_a = 0.03
+b = 0.11
+sigma_b = 0.03
+formula = "color_plus_offset"
+source_bands = ["V", "B"]
+description = "r from V - 0.42*(B-V) + 0.11"
+
+[transforms.apass_sloan_to_sdss.g]
+a = 0.0
+sigma_a = 0.0
+b = 0.0
+sigma_b = 0.0
+formula = "color_plus_offset"
+source_bands = ["g", "r"]
+description = "g_SDSS ≈ g'_APASS"
+
+[transforms.apass_sloan_to_sdss.r]
+a = 0.0
+sigma_a = 0.0
+b = 0.0
+sigma_b = 0.0
+formula = "color_plus_offset"
+source_bands = ["r", "g"]
+description = "r_SDSS ≈ r'_APASS"
+
+[transforms.apass_sloan_to_sdss.i]
+a = 0.0
+sigma_a = 0.0
+b = 0.0
+sigma_b = 0.0
+formula = "color_plus_offset"
+source_bands = ["i", "r"]
+description = "i_SDSS ≈ i'_APASS"

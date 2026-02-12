@@ -45,7 +45,8 @@ class DefaultCalibrator:
         filter_band: str = "V",
     ) -> pd.DataFrame:
         """Query and return the reference catalog for a field."""
-        self._cached_ref = self.ref_catalog.query(center, radius_arcmin, filter_band)
+        canonical_band = self._canonicalize_filter_band(filter_band)
+        self._cached_ref = self.ref_catalog.query(center, radius_arcmin, canonical_band)
         self._cached_center = center
         return self._cached_ref
 
@@ -67,23 +68,27 @@ class DefaultCalibrator:
         -------
         zp, zp_err, match_mask
         """
+        canonical_band = self._canonicalize_filter_band(filter_band)
+
         # Ensure we have a reference catalog
         if self._cached_ref is None or self._cached_ref.empty:
-            center = image.wcs.pixel_to_world(
-                image.shape[1] / 2, image.shape[0] / 2
-            )
-            self.get_reference_catalog(center, filter_band=filter_band)
+            center = image.wcs.pixel_to_world(image.shape[1] / 2, image.shape[0] / 2)
+            self.get_reference_catalog(center, filter_band=canonical_band)
 
         ref = self._cached_ref
         if ref is None or ref.empty:
             logger.warning("No reference catalog available for calibration.")
             return np.nan, np.nan, np.zeros(len(ins_mags), dtype=bool)
 
-        mag_col = f"{filter_band}mag"
-        err_col = f"e_{filter_band}mag"
+        mag_col = f"{canonical_band}mag"
+        err_col = f"e_{canonical_band}mag"
 
         if mag_col not in ref.columns:
-            logger.warning("Filter band %s not found in reference catalog.", filter_band)
+            logger.warning(
+                "Filter band %s (canonical: %s) not found in reference catalog.",
+                filter_band,
+                canonical_band,
+            )
             return np.nan, np.nan, np.zeros(len(ins_mags), dtype=bool)
 
         # Build reference coordinates
@@ -97,7 +102,9 @@ class DefaultCalibrator:
         match_mask = d2d.arcsec < self.match_radius_arcsec
 
         if not np.any(match_mask):
-            logger.warning("No sources matched within %.1f arcsec.", self.match_radius_arcsec)
+            logger.warning(
+                "No sources matched within %.1f arcsec.", self.match_radius_arcsec
+            )
             return np.nan, np.nan, match_mask
 
         matched_refs = ref.iloc[idx[match_mask]].reset_index(drop=True)
@@ -128,7 +135,15 @@ class DefaultCalibrator:
 
         logger.info(
             "ZP = %.3f +/- %.3f from %d stars (filter %s)",
-            zp, zp_err, np.sum(valid), filter_band,
+            zp,
+            zp_err,
+            np.sum(valid),
+            canonical_band,
         )
 
         return zp, zp_err, match_mask
+
+    def _canonicalize_filter_band(self, filter_band: str) -> str:
+        """Normalize input filter names using configured aliases."""
+        aliases = self.config.filters.get("aliases", {})
+        return aliases.get(filter_band, filter_band)

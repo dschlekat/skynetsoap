@@ -6,7 +6,6 @@ Ported from tic_photometry.ipynb / grb250424A_phot.ipynb.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -17,9 +16,6 @@ from astroquery.vizier import Vizier
 from .transforms import apply_transform
 
 logger = logging.getLogger("soap")
-
-# TODO: Add support for more catalogs, e.g. Pan-STARRS, ATLAS, etc. Add args for user-specified catalogs.
-# TODO: Only query catalogs relevant to the target filter band (e.g. if filter_band="R", only query catalogs with R or similar bands).
 
 
 class ReferenceCatalog:
@@ -71,14 +67,24 @@ class ReferenceCatalog:
         -------
         DataFrame with RAJ2000, DEJ2000, and JC magnitude columns.
         """
-        cache_key = f"{center.ra.deg:.6f}_{center.dec.deg:.6f}_{radius_arcmin}"
+        canonical_band = self._canonicalize_filter_band(filter_band)
+        cache_key = (
+            f"{center.ra.deg:.6f}_{center.dec.deg:.6f}_{radius_arcmin}_{canonical_band}"
+        )
         if cache_key in self._cache:
             return self._cache[cache_key]
 
         catalogs = []
-        for cat_name, cat_cfg in self.catalogs_config.items():
+        selected_catalogs = self._select_catalogs_for_band(canonical_band)
+        for cat_name, cat_cfg in selected_catalogs.items():
             try:
-                df = self._query_single(cat_name, cat_cfg, center, radius_arcmin)
+                df = self._query_single(
+                    cat_name,
+                    cat_cfg,
+                    center,
+                    radius_arcmin,
+                    canonical_band,
+                )
                 if df is not None and len(df) > 0:
                     catalogs.append(df)
             except Exception as e:
@@ -98,12 +104,43 @@ class ReferenceCatalog:
         self._cache[cache_key] = result
         return result
 
+    def _canonicalize_filter_band(self, filter_band: str) -> str:
+        """Normalize input filter names using configured aliases."""
+        aliases = self.filters_config.get("aliases", {})
+        return aliases.get(filter_band, filter_band)
+
+    def _select_catalogs_for_band(self, filter_band: str) -> dict:
+        """Choose only catalogs relevant to the requested filter band."""
+        jc_bands = set(
+            self.filters_config.get("systems", {})
+            .get("johnson_cousins", {})
+            .get("bands", [])
+        )
+        sdss_bands = set(
+            self.filters_config.get("systems", {}).get("sdss", {}).get("bands", [])
+        )
+
+        if filter_band in jc_bands:
+            preferred = ("apass",)
+        elif filter_band in sdss_bands:
+            preferred = ("panstarrs", "skymapper")
+        else:
+            return self.catalogs_config
+
+        selected = {
+            name: self.catalogs_config[name]
+            for name in preferred
+            if name in self.catalogs_config
+        }
+        return selected or self.catalogs_config
+
     def _query_single(
         self,
         cat_name: str,
         cat_cfg: dict,
         center: SkyCoord,
         radius_arcmin: float,
+        filter_band: str,
     ) -> pd.DataFrame | None:
         """Query a single Vizier catalog and apply transformations."""
         vizier_id = cat_cfg["vizier_id"]
@@ -128,6 +165,13 @@ class ReferenceCatalog:
             ra_col = renames.get(ra_col, ra_col)
             dec_col = renames.get(dec_col, dec_col)
 
+        # Fill missing error columns with configured default error.
+        # ``self.default_error`` comes from calibration_default_cat_error in defaults.toml.
+        for err_col in cat_cfg.get("errors", {}).values():
+            err_col = renames.get(err_col, err_col)
+            if err_col and err_col not in df.columns:
+                df[err_col] = self.default_error
+
         # Drop rows missing required columns
         required = cat_cfg.get("required_columns", {}).get("columns", [])
         # Apply renames to required column names too
@@ -146,8 +190,29 @@ class ReferenceCatalog:
 
         logger.info("%d stars after filtering for %s", len(df), cat_name)
 
+        # Normalize native catalog band columns to canonical "<band>mag" columns.
+        self._normalize_band_columns(df, cat_cfg, renames)
+
         # Apply photometric transformations to get JC magnitudes
-        df = self._apply_transforms(df, cat_cfg)
+        df = self._apply_transforms(df, cat_cfg, filter_band)
+
+        # Keep only stars that can be used for the requested calibration band.
+        target_mag_col = f"{filter_band}mag"
+        target_err_col = f"e_{filter_band}mag"
+        if target_mag_col not in df.columns:
+            logger.info(
+                "Catalog %s has no %s column after normalization/transforms.",
+                cat_name,
+                target_mag_col,
+            )
+            return None
+        df.dropna(subset=[target_mag_col], inplace=True)
+        if target_err_col not in df.columns:
+            df[target_err_col] = self.default_error
+        else:
+            df[target_err_col] = df[target_err_col].fillna(self.default_error)
+        if df.empty:
+            return None
 
         # Normalize coordinate columns
         if ra_col != "RAJ2000":
@@ -157,13 +222,47 @@ class ReferenceCatalog:
 
         return df
 
-    def _apply_transforms(self, df: pd.DataFrame, cat_cfg: dict) -> pd.DataFrame:
+    def _normalize_band_columns(
+        self, df: pd.DataFrame, cat_cfg: dict, renames: dict
+    ) -> None:
+        """Map native catalog bands (e.g. rPSF) to canonical <band>mag columns."""
+        bands_cfg = cat_cfg.get("bands", {})
+        errors_cfg = cat_cfg.get("errors", {})
+        for band_key, src_col in bands_cfg.items():
+            src_col = renames.get(src_col, src_col)
+            mag_col = f"{band_key}mag"
+            if src_col in df.columns and mag_col not in df.columns:
+                df[mag_col] = df[src_col]
+
+            err_src = errors_cfg.get(band_key)
+            if err_src is None:
+                continue
+            err_src = renames.get(err_src, err_src)
+            err_col = f"e_{band_key}mag"
+            if err_src in df.columns:
+                df[err_col] = df[err_src].fillna(self.default_error)
+            elif err_col not in df.columns:
+                df[err_col] = self.default_error
+
+    def _apply_transforms(
+        self, df: pd.DataFrame, cat_cfg: dict, filter_band: str
+    ) -> pd.DataFrame:
         """Apply Jordi+2006 transforms to produce JC magnitudes."""
+        if filter_band not in set(
+            self.filters_config.get("systems", {})
+            .get("johnson_cousins", {})
+            .get("bands", [])
+        ):
+            return df
+
         transforms = self.filters_config.get("transforms", {}).get("ugriz_to_jc", {})
         bands_cfg = cat_cfg.get("bands", {})
         errors_cfg = cat_cfg.get("errors", {})
 
-        for jc_band, t_cfg in transforms.items():
+        t_cfg = transforms.get(filter_band)
+        if not t_cfg:
+            return df
+        for jc_band in [filter_band]:
             if f"{jc_band}mag" in df.columns:
                 continue
 
@@ -178,8 +277,16 @@ class ReferenceCatalog:
 
             err1_col = errors_cfg.get(src1_key)
             err2_col = errors_cfg.get(src2_key)
-            err1 = df[err1_col].values if (err1_col and err1_col in df.columns) else np.full(len(df), self.default_error)
-            err2 = df[err2_col].values if (err2_col and err2_col in df.columns) else np.full(len(df), self.default_error)
+            err1 = (
+                df[err1_col].values
+                if (err1_col and err1_col in df.columns)
+                else np.full(len(df), self.default_error)
+            )
+            err2 = (
+                df[err2_col].values
+                if (err2_col and err2_col in df.columns)
+                else np.full(len(df), self.default_error)
+            )
 
             mag, mag_err = apply_transform(
                 df[src1_col].values,
@@ -196,9 +303,13 @@ class ReferenceCatalog:
             if t_cfg["formula"] == "color_only":
                 # This gives a color (e.g. U-B); need to add B to get U
                 if jc_band == "U" and "Bmag" in df.columns:
-                    b_err = df["e_Bmag"].values if "e_Bmag" in df.columns else np.full(len(df), self.default_error)
+                    b_err = (
+                        df["e_Bmag"].values
+                        if "e_Bmag" in df.columns
+                        else np.full(len(df), self.default_error)
+                    )
                     df[f"{jc_band}mag"] = mag + df["Bmag"].values
-                    df[f"e_{jc_band}mag"] = np.sqrt(mag_err ** 2 + b_err ** 2)
+                    df[f"e_{jc_band}mag"] = np.sqrt(mag_err**2 + b_err**2)
                 else:
                     df[f"{jc_band}mag"] = mag
                     df[f"e_{jc_band}mag"] = mag_err
@@ -235,8 +346,20 @@ class ReferenceCatalog:
         merged = pd.concat([df1, other_unique], ignore_index=True)
 
         # Ensure standard columns exist
-        for col in ["RAJ2000", "DEJ2000", "Umag", "e_Umag", "Bmag", "e_Bmag",
-                     "Vmag", "e_Vmag", "Rmag", "e_Rmag", "Imag", "e_Imag"]:
+        for col in [
+            "RAJ2000",
+            "DEJ2000",
+            "Umag",
+            "e_Umag",
+            "Bmag",
+            "e_Bmag",
+            "Vmag",
+            "e_Vmag",
+            "Rmag",
+            "e_Rmag",
+            "Imag",
+            "e_Imag",
+        ]:
             if col not in merged.columns:
                 merged[col] = np.nan
 
