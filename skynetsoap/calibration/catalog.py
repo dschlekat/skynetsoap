@@ -18,6 +18,9 @@ from .transforms import apply_transform
 
 logger = logging.getLogger("soap")
 
+# TODO: Add support for more catalogs, e.g. Pan-STARRS, ATLAS, etc. Add args for user-specified catalogs.
+# TODO: Only query catalogs relevant to the target filter band (e.g. if filter_band="R", only query catalogs with R or similar bands).
+
 
 class ReferenceCatalog:
     """Query, transform, and merge Vizier reference catalogs.

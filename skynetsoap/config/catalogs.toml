@@ -20,7 +20,7 @@ r = "e_r_mag"
 i = "e_i_mag"
 
 [catalogs.apass.required_columns]
-columns = ["Vmag", "Bmag", "r_mag", "i_mag"]
+columns = ["Vmag"]
 
 [catalogs.apass.color_cuts]
 "B-V" = { min = -0.3, max = 1.7 }
