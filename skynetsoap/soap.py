@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import glob
-import logging
 from pathlib import Path
-from typing import Any
 
 import numpy as np
-import astropy.units as u
 from astropy.coordinates import SkyCoord
 from tqdm import tqdm
 
@@ -18,15 +15,32 @@ from .core.errors import ccd_magnitude_error
 from .core.result import PhotometryResult
 from .extraction.background import estimate_background
 from .extraction.extractor import extract_sources
-from .extraction.aperture import sum_circle, compute_optimal_aperture, fwhm_scaled_radius
+from .extraction.aperture import (
+    sum_circle,
+    compute_optimal_aperture,
+    fwhm_scaled_radius,
+)
 from .calibration.default_calibrator import DefaultCalibrator
 from .io.skynet_api import SkynetAPI
 from .io.plotter import plot_lightcurve
-from .utils.logging import setup_logging, get_logger
+from .utils.logging import setup_logging
 
 import warnings
 from astropy.utils.exceptions import AstropyWarning
+
 warnings.simplefilter("ignore", category=AstropyWarning)
+
+# TODO: Remove dependency on pandas, replace with polars. This will speed up processing and reduce memory usage, especially for large fields with many sources and measurements.
+# TODO: Add debugging method to inspect individual images with plotting of sources, apertures, etc.
+# TODO: Add better cache management for intermediate products, especially downloaded images, to speed up repeated runs with different configs or parameters.
+# TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog.
+# TODO: Add util methods to clean up downloaded images and results for a given observation ID, or to manage disk usage across multiple runs.
+# TODO: Add options to save intermediate products like calibrated images, source catalogs, etc.
+# TODO: Add forced photometry mode for known or theorized transient target positions.
+# TODO: Add more robust handling of edge cases like no sources detected, no calibrators, failed astrometry, etc.
+# TODO: Add support for multi-aperture photometry and curve-of-growth analysis, as well as debugging modes, for better aperture selection.
+# TODO: Add an optional limiting magnitude calculation based on background noise and aperture size for non-detections.
+# TODO: Add unit tests for individual components and end-to-end pipeline tests with mock data.
 
 
 class Soap:
@@ -55,6 +69,17 @@ class Soap:
         Directory for downloaded FITS images.
     result_dir : str or Path
         Directory for output results.
+
+    Methods
+    -------
+    download(after=None, before=None, days_ago=None)
+        Download FITS images from Skynet with optional date filters.
+    run(images=None, after=None, before=None, days_ago=None)
+        Run the full photometry pipeline on the specified images or all images in ``image_dir``.
+    plot(units="calibrated_mag", path=None, show=False, **kwargs)
+        Plot the light curve in the specified units.
+    export(format="csv", path=None, **kwargs)
+        Export the photometry results to a file in the specified format.
     """
 
     def __init__(
@@ -137,7 +162,9 @@ class Soap:
             self._api = SkynetAPI()
 
         obs = self._api.get_observation(self.observation_id)
-        self.logger.info("Downloading images for observation %d (%s)", self.observation_id, obs.name)
+        self.logger.info(
+            "Downloading images for observation %d (%s)", self.observation_id, obs.name
+        )
 
         images = self._api.download_images(
             obs,
@@ -182,21 +209,25 @@ class Soap:
 
         if not image_paths:
             self.logger.warning("No FITS images found in %s", self.image_dir)
-            self._result = PhotometryResult()
+            self._result = PhotometryResult(
+                observation_id=self.observation_id,
+                result_dir=self.result_dir,
+            )
             return self._result
 
         self.logger.info("Processing %d images", len(image_paths))
 
-        result = PhotometryResult()
+        result = PhotometryResult(
+            observation_id=self.observation_id,
+            result_dir=self.result_dir,
+        )
         ref_catalog_initialized = False
 
         loop = tqdm(image_paths, desc="Processing", disable=not self.verbose)
         for img_path in loop:
             loop.set_description(f"Processing {img_path.name}")
             try:
-                self._process_single_image(
-                    img_path, result, ref_catalog_initialized
-                )
+                self._process_single_image(img_path, result, ref_catalog_initialized)
                 ref_catalog_initialized = True
             except Exception as e:
                 self.logger.warning("Error processing %s: %s", img_path.name, e)
@@ -224,7 +255,9 @@ class Soap:
             if self.solver is not None and self.config.astrometry_enabled:
                 wcs = self.solver.solve(image)
                 if wcs is None:
-                    self.logger.info("Skipping %s: no WCS and solving failed.", img_path.name)
+                    self.logger.info(
+                        "Skipping %s: no WCS and solving failed.", img_path.name
+                    )
                     return
                 image._wcs = wcs
             else:
@@ -236,9 +269,7 @@ class Soap:
             center = image.wcs.pixel_to_world(
                 image.shape[1] / 2.0, image.shape[0] / 2.0
             )
-            self.calibrator.get_reference_catalog(
-                center, filter_band=image.filter_name
-            )
+            self.calibrator.get_reference_catalog(center, filter_band=image.filter_name)
 
         # Background subtraction
         bkg_result = estimate_background(image.data)
@@ -304,7 +335,7 @@ class Soap:
             n_cal = 0
         else:
             cal_mag = ins_mag + zp
-            n_pix = np.pi * aperture_r ** 2
+            n_pix = np.pi * aperture_r**2
             n_bkgpix = np.pi * (3 * aperture_r) ** 2
             cal_mag_err = ccd_magnitude_error(
                 flux=flux,
@@ -375,7 +406,6 @@ class Soap:
                 step=self.config.aperture_step,
             )
 
-        # Default: fwhm_scaled
         return fwhm_scaled_radius(
             fwhm,
             scale=self.config.aperture_scale,
@@ -428,8 +458,13 @@ class Soap:
         Path
         """
         if path is None:
-            ext = {"csv": ".csv", "ecsv": ".ecsv", "parquet": ".parquet",
-                   "json": ".json", "gcn": ".txt"}
+            ext = {
+                "csv": ".csv",
+                "ecsv": ".ecsv",
+                "parquet": ".parquet",
+                "json": ".json",
+                "gcn": ".txt",
+            }
             path = self.result_dir / f"photometry{ext.get(format, '.csv')}"
 
         path = Path(path)

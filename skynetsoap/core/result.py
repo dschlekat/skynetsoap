@@ -69,14 +69,35 @@ class PhotometryResult:
     extracting single-target lightcurves.
     """
 
-    def __init__(self, table: QTable | None = None):
+    def __init__(
+        self,
+        table: QTable | None = None,
+        observation_id: int | None = None,
+        result_dir: str | Path | None = None,
+    ):
         self.table = table if table is not None else _empty_table()
+        self.observation_id = observation_id
+        self.result_dir = Path(result_dir) if result_dir is not None else None
 
     def __len__(self) -> int:
         return len(self.table)
 
     def __repr__(self) -> str:
         return f"PhotometryResult({len(self)} measurements)"
+
+    def _new_result(self, table: QTable) -> PhotometryResult:
+        return PhotometryResult(
+            table,
+            observation_id=self.observation_id,
+            result_dir=self.result_dir,
+        )
+
+    def _new_target(self, table: QTable) -> PhotometryTarget:
+        return PhotometryTarget(
+            table,
+            observation_id=self.observation_id,
+            result_dir=self.result_dir,
+        )
 
     # ------------------------------------------------------------------
     # Adding data
@@ -110,19 +131,21 @@ class PhotometryResult:
         days_ago: float | None = None,
     ) -> PhotometryResult:
         """Return a new PhotometryResult filtered by date."""
-        filtered = filter_table_by_date(self.table, after=after, before=before, days_ago=days_ago)
-        return PhotometryResult(filtered)
+        filtered = filter_table_by_date(
+            self.table, after=after, before=before, days_ago=days_ago
+        )
+        return self._new_result(filtered)
 
     def filter_by_band(self, band: str) -> PhotometryResult:
         """Return a new PhotometryResult for a single filter band."""
         mask = self.table["filter"] == band
-        return PhotometryResult(self.table[mask])
+        return self._new_result(self.table[mask])
 
     def sort_by_time(self) -> PhotometryResult:
         """Return a copy sorted by MJD."""
         t = self.table.copy()
         t.sort("mjd")
-        return PhotometryResult(t)
+        return self._new_result(t)
 
     def extract_target(
         self,
@@ -130,7 +153,7 @@ class PhotometryResult:
         radius_arcsec: float = 3.0,
         forced_photometry: bool = False,
         snr_threshold: float = 3.0,
-    ) -> PhotometryResult:
+    ) -> PhotometryTarget:
         """Extract measurements for a single sky coordinate.
 
         Parameters
@@ -146,7 +169,7 @@ class PhotometryResult:
 
         Returns
         -------
-        PhotometryResult containing only the target.
+        PhotometryTarget containing only the target.
         """
         source_coords = SkyCoord(
             ra=self.table["ra"],
@@ -167,15 +190,7 @@ class PhotometryResult:
 
         # Deduplicate: keep closest match per image
         if len(result) > 0:
-            seps = source_coords[mask].separation(coord).arcsec
-            if forced_photometry and snr_threshold > 0:
-                snr_ok_vals = result["snr"] >= snr_threshold
-                not_forced_vals = ~result["is_forced"]
-                keep_mask = snr_ok_vals | not_forced_vals
-                # recalc seps for filtered
-                seps_filtered = SkyCoord(ra=result["ra"], dec=result["dec"]).separation(coord).arcsec
-            else:
-                seps_filtered = SkyCoord(ra=result["ra"], dec=result["dec"]).separation(coord).arcsec
+            seps = SkyCoord(ra=result["ra"], dec=result["dec"]).separation(coord).arcsec
 
             # Group by image_file and keep minimum separation
             unique_images = np.unique(result["image_file"])
@@ -183,12 +198,12 @@ class PhotometryResult:
             for img in unique_images:
                 img_mask = result["image_file"] == img
                 img_indices = np.where(img_mask)[0]
-                img_seps = seps_filtered[img_mask]
+                img_seps = seps[img_mask]
                 best = img_indices[np.argmin(img_seps)]
                 keep_indices.append(best)
             result = result[keep_indices]
 
-        return PhotometryResult(result)
+        return self._new_target(result)
 
     # ------------------------------------------------------------------
     # Export methods
@@ -225,9 +240,63 @@ class PhotometryResult:
     def to_polars(self):
         """Convert to a polars DataFrame."""
         import polars as pl
+
         return pl.from_pandas(self.to_pandas())
 
-    def to_gcn(self, path: str | Path, start_time: float | None = None, all_results: bool = False) -> Path:
+    def to_gcn(
+        self,
+        path: str | Path,
+        start_time: float | None = None,
+        all_results: bool = False,
+    ) -> Path:
         """Export in GCN circular format."""
         from ..io.table import write_gcn_table
-        return write_gcn_table(self.table, path, start_time=start_time, all_results=all_results)
+
+        return write_gcn_table(
+            self.table, path, start_time=start_time, all_results=all_results
+        )
+
+
+class PhotometryTarget(PhotometryResult):
+    """Single-target photometry result with convenience export."""
+
+    def __repr__(self) -> str:
+        return f"PhotometryTarget({len(self)} measurements)"
+
+    def export(
+        self,
+        format: str = "csv",
+        path: str | Path | None = None,
+        **kwargs,
+    ) -> Path:
+        """Export target results to file.
+
+        Parameters
+        ----------
+        format : str
+            "csv", "ecsv", "parquet", "json", "gcn".
+        path : str or Path, optional
+            Output path. Auto-generated if not provided.
+        """
+        if path is None:
+            ext = {
+                "csv": ".csv",
+                "ecsv": ".ecsv",
+                "parquet": ".parquet",
+                "json": ".json",
+                "gcn": ".txt",
+            }
+            default_name = f"target_photometry{ext.get(format, '.csv')}"
+            if self.result_dir is not None:
+                path = self.result_dir / default_name
+            elif self.observation_id is not None:
+                path = Path("soap_results") / str(self.observation_id) / default_name
+            else:
+                path = Path(default_name)
+
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        export_fn = getattr(self, f"to_{format}", None)
+        if export_fn is None:
+            raise ValueError(f"Unknown export format: {format!r}")
+        return export_fn(path, **kwargs)
