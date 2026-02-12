@@ -1,0 +1,66 @@
+# Vizier catalog definitions for photometric calibration
+
+[catalogs.apass]
+vizier_id = "II/336/apass9"
+ra_column = "RAJ2000"
+dec_column = "DEJ2000"
+search_radius_arcmin = 10.0
+priority = 1
+
+[catalogs.apass.bands]
+B = "Bmag"
+V = "Vmag"
+r = "r_mag"
+i = "i_mag"
+
+[catalogs.apass.errors]
+B = "e_Bmag"
+V = "e_Vmag"
+r = "e_r_mag"
+i = "e_i_mag"
+
+[catalogs.apass.required_columns]
+columns = ["Vmag", "Bmag", "r_mag", "i_mag"]
+
+[catalogs.apass.color_cuts]
+"B-V" = { min = -0.3, max = 1.7 }
+
+[catalogs.apass.renames]
+r_mag = "rmag"
+i_mag = "imag"
+e_r_mag = "e_rmag"
+e_i_mag = "e_imag"
+
+
+[catalogs.skymapper]
+vizier_id = "II/358/smss"
+ra_column = "RAICRS"
+dec_column = "DEICRS"
+search_radius_arcmin = 10.0
+priority = 2
+
+[catalogs.skymapper.bands]
+u = "uPSF"
+g = "gPSF"
+r = "rPSF"
+i = "iPSF"
+z = "zPSF"
+
+[catalogs.skymapper.errors]
+# SkyMapper doesn't always have per-star errors; use defaults
+u = "e_uPSF"
+g = "e_gPSF"
+r = "e_rPSF"
+i = "e_iPSF"
+z = "e_zPSF"
+
+[catalogs.skymapper.required_columns]
+columns = ["gPSF", "rPSF", "iPSF"]
+
+[catalogs.skymapper.color_cuts]
+"__g-r_PSF" = { min = -0.4, max = 1.6 }
+"__u-g_PSF" = { min = -0.5, max = 3.5 }
+
+[catalogs.skymapper.renames]
+RAICRS = "RAJ2000"
+DEICRS = "DEJ2000"

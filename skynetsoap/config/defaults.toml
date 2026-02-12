@@ -1,0 +1,31 @@
+# Default pipeline parameters
+
+[extraction]
+threshold = 1.5          # Detection threshold in sigma above background
+min_area = 5             # Minimum number of connected pixels for a detection
+
+[aperture]
+mode = "fwhm_scaled"     # "fwhm_scaled", "optimal", or "fixed"
+scale = 2.5              # Multiplier for FWHM-scaled aperture
+fixed_radius = 5.0       # Radius in pixels for fixed mode
+min_radius = 3.0         # Minimum aperture radius in pixels
+max_radius = 20.0        # Maximum aperture radius in pixels
+step = 0.5               # Step size for optimal aperture search
+
+[calibration]
+sigma_clip = 3.0         # Sigma clipping threshold for zeropoint calculation
+max_iter = 5             # Maximum iterations for sigma clipping
+match_radius_arcsec = 3.0  # Cross-match radius for catalog matching
+default_cat_error = 0.03 # Default catalog magnitude error if not available
+merge_tolerance_arcsec = 2.0  # Tolerance for merging duplicate catalog entries
+
+[forced_photometry]
+enabled = false          # Whether to perform forced photometry for non-detections
+snr_threshold = 3.0      # Minimum SNR for forced photometry measurements
+
+[astrometry]
+enabled = false          # Whether to attempt astrometric solving
+timeout = 120            # Timeout in seconds for astrometry.net solver
+
+[logging]
+level = "WARNING"        # Default logging level

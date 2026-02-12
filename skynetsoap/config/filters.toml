@@ -1,0 +1,75 @@
+# Filter definitions and transformation coefficients
+# Transformations from Jordi, Grebel & Ammon (2006), A&A 460, 339
+
+[systems.johnson_cousins]
+name = "Johnson-Cousins"
+bands = ["U", "B", "V", "R", "I"]
+
+[systems.sdss]
+name = "SDSS/ugriz"
+bands = ["u", "g", "r", "i", "z"]
+
+# Aliases map common FITS header filter names to canonical band names
+[aliases]
+"Open" = "Open"
+"uprime" = "u"
+"gprime" = "g"
+"rprime" = "r"
+"iprime" = "i"
+"zprime" = "z"
+"u'" = "u"
+"g'" = "g"
+"r'" = "r"
+"i'" = "i"
+"z'" = "z"
+
+# Transformation coefficients: ugriz -> Johnson-Cousins
+# Each transform specifies: a, sigma_a, b, sigma_b, formula type, source bands
+# formula types:
+#   "color_plus_offset" : target = source1 + a*(source1 - source2) + b
+#   "color_only"        : target_color = a*(source1 - source2) + b  (returns a color, not a magnitude)
+
+[transforms.ugriz_to_jc.U]
+a = 0.79
+sigma_a = 0.02
+b = -0.93
+sigma_b = 0.02
+formula = "color_only"
+source_bands = ["u", "g"]
+description = "U-B color from u-g"
+
+[transforms.ugriz_to_jc.B]
+a = 0.313
+sigma_a = 0.003
+b = 0.219
+sigma_b = 0.002
+formula = "color_plus_offset"
+source_bands = ["g", "r"]
+description = "B from g + a*(g-r) + b"
+
+[transforms.ugriz_to_jc.V]
+a = -0.565
+sigma_a = 0.001
+b = -0.016
+sigma_b = 0.001
+formula = "color_plus_offset"
+source_bands = ["g", "r"]
+description = "V from g + a*(g-r) + b"
+
+[transforms.ugriz_to_jc.R]
+a = -0.153
+sigma_a = 0.003
+b = -0.117
+sigma_b = 0.003
+formula = "color_plus_offset"
+source_bands = ["r", "i"]
+description = "R from r + a*(r-i) + b"
+
+[transforms.ugriz_to_jc.I]
+a = -0.386
+sigma_a = 0.004
+b = -0.397
+sigma_b = 0.001
+formula = "color_plus_offset"
+source_bands = ["i", "z"]
+description = "I from i + a*(i-z) + b"
