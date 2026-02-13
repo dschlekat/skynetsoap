@@ -30,7 +30,7 @@ from astropy.utils.exceptions import AstropyWarning
 
 warnings.simplefilter("ignore", category=AstropyWarning)
 
-# TODO: Remove dependency on pandas, replace with polars. This will speed up processing and reduce memory usage, especially for large fields with many sources and measurements.
+# TODO: Add clarity for magnitude systems in the results, e.g. by including a "cal_mag_system" column that specifies the system of the calibrated magnitudes (e.g. "AB", "Vega"). Stick with the system used by the input data, but provide a way to convert if needed.
 # TODO: Add debugging method to inspect individual images with plotting of sources, apertures, etc.
 # TODO: Add better cache management for intermediate products, especially downloaded images, to speed up repeated runs with different configs or parameters.
 # TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog.
@@ -40,7 +40,8 @@ warnings.simplefilter("ignore", category=AstropyWarning)
 # TODO: Add more robust handling of edge cases like no sources detected, no calibrators, failed astrometry, etc.
 # TODO: Add support for multi-aperture photometry and curve-of-growth analysis, as well as debugging modes, for better aperture selection.
 # TODO: Add an optional limiting magnitude calculation based on background noise and aperture size for non-detections.
-# TODO: Add unit tests for individual components and end-to-end pipeline tests with mock data.
+# TODO: Add example usage within the class docstring and in the README.
+# TODO: Rename package and core class to skynetphot and SkynetPhot for better clarity and discoverability.
 
 
 class Soap:
