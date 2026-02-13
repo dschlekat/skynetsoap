@@ -5,7 +5,6 @@
 # - SkyMapper (II/358/smss): uPSF/gPSF/rPSF/iPSF/zPSF (+ errors e_uPSF etc.), has flags + ClassStar
 # - APASS DR9 (II/336/apass9): Johnson Bmag/Vmag and Sloan-like g'mag/r'mag/i'mag (apostrophes in names!)
 #
-# TODO: Add better catalog priority system
 
 ####################################################################
 ###                          Pan-STARRS                          ###

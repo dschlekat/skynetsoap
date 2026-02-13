@@ -10,6 +10,11 @@ from astropy.coordinates import SkyCoord
 from tqdm import tqdm
 
 from .config.loader import SOAPConfig, load_config
+from .config.photometry import (
+    canonicalize_filter_band,
+    get_ab_minus_vega_offsets,
+    infer_mag_system_for_filter,
+)
 from .core.image import FITSImage
 from .core.errors import ccd_magnitude_error, compute_limiting_magnitude
 from .core.limiting_mag import compute_robust_limiting_magnitude
@@ -38,12 +43,11 @@ from astropy.utils.exceptions import AstropyWarning
 
 warnings.simplefilter("ignore", category=AstropyWarning)
 
-# TODO: Add clarity for magnitude systems in the results, e.g. by including a "cal_mag_system" column that specifies the system of the calibrated magnitudes (e.g. "AB", "Vega"). Stick with the system used by the input data, but provide a way to convert if needed.
 # TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog, using dask.
 # TODO: Add more robust handling of edge cases like no sources detected, no calibrators, failed astrometry, etc.
 # TODO: Rename package and core class to skynetphot and SkynetPhot for better clarity and discoverability.
-# TODO: Add differential photometry mode that uses an ensemble of reference stars in the field to correct for systematics and improve precision, especially for time-series data. This mode should only report flux, and any target source extraction should return a normalized flux relative to its median flux across the observation.
 # TODO: Review repo's code organization, moving methods from soap.py to different modules as needed to keep the core class focused on orchestration and high-level logic, while utility functions and specific steps are implemented in separate files for better maintainability.
+# TODO: Add astrometry support with astrometry.net
 
 
 class Soap:
@@ -102,7 +106,7 @@ class Soap:
     -------
     download(after=None, before=None, days_ago=None)
         Download FITS images from Skynet with optional date filters.
-    run(images=None, forced_positions=None, after=None, before=None, days_ago=None)
+    run(images=None, forced_positions=None, after=None, before=None, days_ago=None, convert_vega_to_ab=None)
         Run the full photometry pipeline. Optionally include forced photometry.
     plot(units="calibrated_mag", path=None, show=False, **kwargs)
         Plot the light curve in the specified units.
@@ -243,6 +247,7 @@ class Soap:
         days_ago: float | None = None,
         forced_positions: list[SkyCoord] | None = None,
         debug: bool | None = None,
+        convert_vega_to_ab: bool | None = None,
     ) -> PhotometryResult:
         """Run the full field-wide photometry pipeline.
 
@@ -259,6 +264,9 @@ class Soap:
         debug : bool, optional
             Enable debug plotting for this run. If None, uses config setting.
             If True, generates 4-panel diagnostic plots for each image.
+        convert_vega_to_ab : bool, optional
+            If True, convert Vega-based calibrated magnitudes/zeropoints to AB.
+            If None, uses config ``calibration.convert_vega_to_ab``.
 
         Returns
         -------
@@ -289,6 +297,11 @@ class Soap:
 
         # Determine debug mode (parameter overrides config)
         debug_mode = debug if debug is not None else self.config.debug_mode
+        convert_vega_to_ab_enabled = (
+            self.config.calibration_convert_vega_to_ab
+            if convert_vega_to_ab is None
+            else convert_vega_to_ab
+        )
 
         loop = tqdm(image_paths, desc="Processing", disable=not self.verbose)
         for img_path in loop:
@@ -300,6 +313,7 @@ class Soap:
                     ref_catalog_initialized,
                     forced_positions,
                     debug_mode,
+                    convert_vega_to_ab_enabled,
                 )
                 ref_catalog_initialized = True
             except Exception as e:
@@ -321,6 +335,7 @@ class Soap:
         ref_catalog_initialized: bool,
         forced_positions: list[SkyCoord] | None = None,
         debug_mode: bool = False,
+        convert_vega_to_ab: bool = False,
     ) -> None:
         """Process a single FITS image through the pipeline."""
         image = FITSImage.load(img_path)
@@ -405,15 +420,31 @@ class Soap:
         )
         n_cal = int(np.sum(match_mask)) if match_mask is not None else 0
 
-        limiting_method = self._resolve_limiting_method()
+        canonical_filter = canonicalize_filter_band(
+            image.filter_name, self.config.filters
+        )
+        cal_mag_system = self._infer_calibrated_mag_system(canonical_filter)
+        if convert_vega_to_ab and cal_mag_system == "Vega":
+            ab_minus_vega = self._ab_minus_vega_offset(canonical_filter)
+            if ab_minus_vega is None:
+                self.logger.warning(
+                    "Requested Vega->AB conversion but no offset is defined for filter %s.",
+                    canonical_filter,
+                )
+            else:
+                zp = zp + ab_minus_vega
+                cal_mag_system = "AB"
+                self.logger.info(
+                    "Converted calibration to AB for filter %s using AB-Vega offset %.3f mag.",
+                    canonical_filter,
+                    ab_minus_vega,
+                )
 
+        limiting_method = self._resolve_limiting_method()
         cal_limiting_mag = compute_limiting_magnitude(
             zp, bkg_result.global_rms, calib_aperture_r, n_sigma=5.0
         )
         robust_extra_mask = self._build_robust_extra_mask(image, limiting_method)
-
-        aliases = self.config.filters.get("aliases", {})
-        canonical_filter = aliases.get(image.filter_name, image.filter_name)
         self.logger.info(
             "ZP = %.3f +/- %.3f from %d stars (filter %s), limiting mag (analytic) = %.3f",
             zp,
@@ -499,6 +530,7 @@ class Soap:
                 ins_mag_err=np.asarray(ins_mag_err, dtype=float),
                 calibrated_mag=np.asarray(cal_mag, dtype=float),
                 calibrated_mag_err=np.asarray(cal_mag_err, dtype=float),
+                cal_mag_system=cal_mag_system,
                 zp=zp,
                 zp_err=zp_err,
                 aperture_id=aperture_id,
@@ -585,6 +617,7 @@ class Soap:
                 ins_mag_err=np.asarray(forced_ins_mag_err, dtype=float),
                 calibrated_mag=np.asarray(forced_cal_mag, dtype=float),
                 calibrated_mag_err=np.asarray(forced_cal_mag_err, dtype=float),
+                cal_mag_system=cal_mag_system,
                 zp=zp,
                 zp_err=zp_err,
                 aperture_id=0,
@@ -657,6 +690,16 @@ class Soap:
             )
             return "analytic"
         return limiting_method
+
+    def _infer_calibrated_mag_system(self, canonical_filter: str) -> str:
+        """Infer calibrated magnitude system from canonical filter band."""
+        return infer_mag_system_for_filter(canonical_filter, self.config.filters)
+
+    def _ab_minus_vega_offset(self, canonical_filter: str) -> float | None:
+        """Return AB-Vega offset for a canonical filter, if available."""
+        band = canonicalize_filter_band(canonical_filter, self.config.filters)
+        offsets = get_ab_minus_vega_offsets()
+        return offsets.get(band)
 
     def _build_robust_extra_mask(
         self, image: FITSImage, limiting_method: str
@@ -833,6 +876,7 @@ class Soap:
         ins_mag_err: np.ndarray,
         calibrated_mag: np.ndarray,
         calibrated_mag_err: np.ndarray,
+        cal_mag_system: str,
         zp: float,
         zp_err: float,
         aperture_id: int,
@@ -871,6 +915,7 @@ class Soap:
                 calibrated_mag_err=float(calibrated_mag_err[i])
                 if np.isfinite(calibrated_mag_err[i])
                 else np.nan,
+                cal_mag_system=cal_mag_system,
                 zeropoint=float(zp) if not np.isnan(zp) else np.nan,
                 zeropoint_err=float(zp_err) if not np.isnan(zp_err) else np.nan,
                 aperture_id=aperture_id,

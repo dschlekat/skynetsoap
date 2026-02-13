@@ -1,5 +1,6 @@
 # Filter definitions and transformation coefficients
 # Transformations from Jordi, Grebel & Ammon (2006), A&A 460, 339 & from Tonry et al. (2012), ApJ 750, 99
+# Offsets from 
 
 [systems.johnson_cousins]
 name = "Johnson-Cousins"
@@ -30,6 +31,32 @@ bands = ["B", "V", "g", "r", "i"]
 "r'" = "r"
 "i'" = "i"
 "z'" = "z"
+
+[photometry.band_mag_system]
+Open = "Unknown"
+U = "Vega"
+B = "Vega"
+V = "Vega"
+R = "Vega"
+I = "Vega"
+u = "AB"
+g = "AB"
+r = "AB"
+i = "AB"
+z = "AB"
+y = "AB"
+
+[photometry.ab_minus_vega_offsets]
+U = 0.79
+B = -0.09
+V = 0.02
+R = 0.21
+I = 0.45
+u = 0.91
+g = -0.08
+r = 0.16
+i = 0.37
+z = 0.54
 
 # Transformation coefficients: ugriz -> Johnson-Cousins
 # Each transform specifies: a, sigma_a, b, sigma_b, formula type, source bands

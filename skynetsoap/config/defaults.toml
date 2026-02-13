@@ -20,6 +20,7 @@ max_iter = 5                               # Maximum iterations for sigma clippi
 match_radius_arcsec = 3.0                  # Cross-match radius for catalog matching
 default_cat_error = 0.03                   # Default catalog magnitude error if not available
 merge_tolerance_arcsec = 2.0               # Tolerance for merging duplicate catalog entries
+convert_vega_to_ab = false                 # If true, convert Vega-based calibrated mags/zeropoints to AB
 
 [forced_photometry]
 enabled = false                            # Whether to perform forced photometry for non-detections

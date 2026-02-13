@@ -52,6 +52,7 @@ class SOAPConfig:
     calibration_match_radius_arcsec: float = 3.0
     calibration_default_cat_error: float = 0.03
     calibration_merge_tolerance_arcsec: float = 2.0
+    calibration_convert_vega_to_ab: bool = False
 
     # Forced photometry
     forced_photometry_enabled: bool = False
@@ -114,6 +115,9 @@ class SOAPConfig:
         )
         cfg.calibration_merge_tolerance_arcsec = cal.get(
             "merge_tolerance_arcsec", cfg.calibration_merge_tolerance_arcsec
+        )
+        cfg.calibration_convert_vega_to_ab = cal.get(
+            "convert_vega_to_ab", cfg.calibration_convert_vega_to_ab
         )
 
         fp = d.get("forced_photometry", {})

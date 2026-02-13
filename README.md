@@ -235,6 +235,29 @@ cfg = load_config(overrides={"aperture": {"mode": "optimal"}, "calibration": {"s
 s = Soap(observation_id=12345, config=cfg)
 ```
 
+### Magnitude systems (AB/Vega)
+
+Each calibrated row includes a `cal_mag_system` column (`"AB"`, `"Vega"`, or `"Unknown"`).
+
+To automatically convert Vega-based calibrated results to AB during pipeline execution:
+
+```python
+# One-off per run
+result = s.run(convert_vega_to_ab=True)
+
+# Or set as a config default
+cfg = load_config(overrides={"calibration": {"convert_vega_to_ab": True}})
+s = Soap(observation_id=12345, config=cfg)
+result = s.run()
+```
+
+AB-Vega offsets and filter/system mappings are centrally defined in `skynetsoap/config/filters.toml` under:
+
+- `photometry.band_mag_system`
+- `photometry.ab_minus_vega_offsets`
+
+These offsets are intentionally not runtime-overridable; update them in `filters.toml` when adopting newer literature values.
+
 Enable robust blank-sky limiting-magnitude sampling (optional):
 
 ```python

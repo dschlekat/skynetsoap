@@ -11,6 +11,7 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.table import QTable
 
+from ..config.photometry import canonicalize_filter_band, get_ab_minus_vega_offsets
 from ..utils.time_utils import filter_table_by_date
 
 logger = logging.getLogger("soap")
@@ -34,6 +35,7 @@ _COLUMNS = {
     "ins_mag_err": (float, u.mag),
     "calibrated_mag": (float, u.mag),
     "calibrated_mag_err": (float, u.mag),
+    "cal_mag_system": (str, None),
     "zeropoint": (float, u.mag),
     "zeropoint_err": (float, u.mag),
     "aperture_id": (int, None),
@@ -46,6 +48,17 @@ _COLUMNS = {
     "is_forced": (bool, None),
     "flag": (int, None),
 }
+
+
+def _normalize_mag_system(system: str | None) -> str | None:
+    if system is None:
+        return None
+    s = str(system).strip().lower()
+    if s == "ab":
+        return "AB"
+    if s == "vega":
+        return "Vega"
+    return None
 
 
 def _empty_table() -> QTable:
@@ -325,6 +338,78 @@ class PhotometryResult:
         import polars as pl
 
         return pl.from_pandas(self.to_pandas())
+
+    def convert_calibrated_mag_system(
+        self,
+        target_system: str,
+        inplace: bool = False,
+    ) -> PhotometryResult:
+        """Convert calibrated magnitudes between AB and Vega systems.
+
+        Parameters
+        ----------
+        target_system : str
+            Magnitude system to convert to ("AB" or "Vega").
+        inplace : bool
+            If True, mutate this result and return self.
+        """
+        target = _normalize_mag_system(target_system)
+        if target is None:
+            raise ValueError("target_system must be 'AB' or 'Vega'.")
+        if "cal_mag_system" not in self.table.colnames:
+            raise ValueError(
+                "Missing 'cal_mag_system' column; cannot convert magnitude systems."
+            )
+
+        table = self.table if inplace else self.table.copy()
+        if len(table) == 0:
+            return self if inplace else self._new_result(table)
+
+        offsets = get_ab_minus_vega_offsets()
+
+        systems_raw = np.asarray(table["cal_mag_system"], dtype="U16")
+        systems = np.array(
+            [_normalize_mag_system(s) or "Unknown" for s in systems_raw], dtype="U16"
+        )
+        filters = np.asarray(table["filter"], dtype="U64")
+        mags = np.asarray(table["calibrated_mag"], dtype=float).copy()
+
+        needs = systems != target
+        convertible = needs & np.isin(systems, ("AB", "Vega"))
+        unknown = needs & ~np.isin(systems, ("AB", "Vega"))
+        if np.any(unknown):
+            bad = sorted(set(systems_raw[unknown].tolist()))
+            raise ValueError(
+                "Cannot convert rows with unknown cal_mag_system values: "
+                + ", ".join(repr(v) for v in bad)
+            )
+
+        # Additive conversion: m_AB = m_Vega + (AB - Vega offset).
+        for band in np.unique(filters[convertible]):
+            band_key = str(band).strip()
+            offset_key = canonicalize_filter_band(band_key)
+            offset = offsets.get(offset_key)
+            if offset is None:
+                raise ValueError(
+                    f"Missing AB-Vega offset for filter {band!r} in config/filters.toml."
+                )
+            idx = convertible & (filters == band)
+            from_ab = idx & (systems == "AB")
+            from_vega = idx & (systems == "Vega")
+            if target == "AB":
+                mags[from_vega] = mags[from_vega] + offset
+            else:  # target == "Vega"
+                mags[from_ab] = mags[from_ab] - offset
+
+        table["calibrated_mag"] = mags * u.mag
+        systems_out = systems_raw.copy()
+        systems_out[convertible] = target
+        table["cal_mag_system"] = systems_out
+
+        if inplace:
+            self.table = table
+            return self
+        return self._new_result(table)
 
     def to_gcn(
         self,
