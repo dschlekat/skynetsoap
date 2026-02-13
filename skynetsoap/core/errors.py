@@ -8,6 +8,40 @@ from __future__ import annotations
 import numpy as np
 
 
+# ---------------------------------------------------------------------------
+# Custom exception hierarchy
+# ---------------------------------------------------------------------------
+
+
+class SOAPError(Exception):
+    """Base exception for the SOAP pipeline."""
+
+
+class ExtractionError(SOAPError):
+    """Raised when source extraction fails."""
+
+
+class CalibrationError(SOAPError):
+    """Raised when photometric calibration fails."""
+
+
+class AstrometryError(SOAPError):
+    """Raised when astrometric solving fails."""
+
+
+class ConfigError(SOAPError):
+    """Raised for configuration validation errors."""
+
+
+class ImageError(SOAPError):
+    """Raised for issues loading or processing FITS images."""
+
+
+# ---------------------------------------------------------------------------
+# Error models
+# ---------------------------------------------------------------------------
+
+
 def ccd_magnitude_error(
     flux: float | np.ndarray,
     gain: float,
@@ -46,10 +80,10 @@ def ccd_magnitude_error(
     """
     var_flux = (
         flux / gain
-        + n_pix * (rdnoise ** 2 + background / gain)
-        + (n_pix ** 2) * (sigma_bkg ** 2) / n_bkgpix
+        + n_pix * (rdnoise**2 + background / gain)
+        + (n_pix**2) * (sigma_bkg**2) / n_bkgpix
     )
     sigma_flux = np.sqrt(var_flux)
     sigma_inst = (2.5 / np.log(10)) * (sigma_flux / flux)
-    sigma_m = np.sqrt(sigma_inst ** 2 + sigma_zp ** 2)
+    sigma_m = np.sqrt(sigma_inst**2 + sigma_zp**2)
     return sigma_m
