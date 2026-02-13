@@ -71,12 +71,12 @@ class DefaultCalibrator:
         canonical_band = self._canonicalize_filter_band(filter_band)
 
         # Ensure we have a reference catalog
-        if self._cached_ref is None or self._cached_ref.empty:
+        if self._cached_ref is None or self._cached_ref.is_empty():
             center = image.wcs.pixel_to_world(image.shape[1] / 2, image.shape[0] / 2)
             self.get_reference_catalog(center, filter_band=canonical_band)
 
         ref = self._cached_ref
-        if ref is None or ref.empty:
+        if ref is None or ref.is_empty():
             logger.warning("No reference catalog available for calibration.")
             return np.nan, np.nan, np.zeros(len(ins_mags), dtype=bool)
 
@@ -133,14 +133,6 @@ class DefaultCalibrator:
             sigma_cat=cat_errs[valid],
             sigma_clip=self.sigma_clip,
             max_iter=self.max_iter,
-        )
-
-        logger.info(
-            "ZP = %.3f +/- %.3f from %d stars (filter %s)",
-            zp,
-            zp_err,
-            np.sum(valid),
-            canonical_band,
         )
 
         return zp, zp_err, match_mask

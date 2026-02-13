@@ -365,6 +365,19 @@ class Soap:
             image, ins_mag_cal, ins_mag_err_cal, world_coords_cal, image.filter_name
         )
         n_cal = int(np.sum(match_mask)) if match_mask is not None else 0
+        cal_limiting_mag = compute_limiting_magnitude(
+            zp, bkg_result.global_rms, calib_aperture_r, n_sigma=5.0
+        )
+        aliases = self.config.filters.get("aliases", {})
+        canonical_filter = aliases.get(image.filter_name, image.filter_name)
+        self.logger.info(
+            "ZP = %.3f +/- %.3f from %d stars (filter %s), limiting mag = %.3f",
+            zp,
+            zp_err,
+            n_cal,
+            canonical_filter,
+            cal_limiting_mag,
+        )
 
         # Multi-aperture photometry loop
         for aperture_id, aperture_r in enumerate(aperture_radii):

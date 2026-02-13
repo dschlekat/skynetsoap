@@ -97,6 +97,13 @@ class TestPipelineEndToEnd:
         cal_mag = np.array(result.table["calibrated_mag"])
         np.testing.assert_allclose(cal_mag, ins_mag + 25.0, atol=0.01)
 
+        # Limiting magnitude should be fainter (numerically larger)
+        # than all measured/calibrated stellar magnitudes.
+        lim_mag = np.array(result.table["limiting_mag"], dtype=float)
+        finite = np.isfinite(cal_mag) & np.isfinite(lim_mag)
+        assert np.any(finite)
+        assert np.all(lim_mag[finite] > cal_mag[finite])
+
         # Export produces a CSV file
         csv_path = s.export(format="csv")
         assert csv_path.exists()
