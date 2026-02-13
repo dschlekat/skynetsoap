@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from astropy.coordinates import SkyCoord
 
@@ -12,13 +10,10 @@ from skynetsoap import Soap
 
 pytestmark = [
     pytest.mark.smoke,
-    pytest.mark.skipif(
-        os.getenv("RUN_SMOKE") != "1",
-        reason="Set RUN_SMOKE=1 to run network-backed smoke tests.",
-    ),
 ]
 
 
+@pytest.mark.filterwarnings("ignore::astropy.wcs.wcs.FITSFixedWarning")
 def test_example_observations_smoke(tmp_path):
     """Run the two example observation workflows end-to-end."""
     # JC filter calibration example

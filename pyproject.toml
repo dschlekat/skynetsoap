@@ -38,7 +38,7 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v"
+addopts = "-v -m 'not smoke'"
 markers = [
     "smoke: network-backed opt-in end-to-end smoke tests",
 ]
