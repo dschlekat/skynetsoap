@@ -1,0 +1,62 @@
+[project]
+name = "skynetsoap"
+version = "2.0.0"
+description = "Field-wide aperture photometry pipeline for Skynet observations"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "Donovan Schlekat" },
+]
+
+dependencies = [
+    "astropy>=6.0",
+    "astroquery>=0.4",
+    "matplotlib>=3.9",
+    "numpy>=2.0",
+    "pandas>=2.0",
+    "polars>=1.0",
+    "pyarrow>=15.0",
+    "scipy>=1.14",
+    "sep>=1.2",
+    "skynetapi @ git+https://github.com/astrodyl/skynetapi.git",
+    "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+astrometry = [
+    "astroquery>=0.4",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v -m 'not smoke'"
+markers = [
+    "smoke: network-backed opt-in end-to-end smoke tests",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["skynetsoap"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/tests",
+]
+
+[dependency-groups]
+dev = [
+    "detect-secrets>=1.5.0",
+    "pre-commit>=4.5.1",
+    "ruff>=0.15.0",
+]

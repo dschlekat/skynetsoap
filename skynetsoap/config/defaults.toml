@@ -1,0 +1,52 @@
+# Default pipeline parameters
+
+[extraction]
+threshold = 1.5                            # Detection threshold in sigma above background
+min_area = 5                               # Minimum number of connected pixels for a detection
+
+[aperture]
+mode = "optimal"                           # "fwhm_scaled", "optimal", "fixed", or "multi"
+scale = 2.5                                # Multiplier for FWHM-scaled aperture
+fixed_radius = 5.0                         # Radius in pixels for fixed mode
+min_radius = 2.0                           # Minimum aperture radius in pixels
+max_radius = 10.0                          # Maximum aperture radius in pixels
+step = 0.5                                 # Step size for optimal aperture search
+radii = [3.0, 5.0, 7.0]                    # List of aperture radii for multi-aperture mode
+keep_all = false                           # If true, keep all aperture measurements; if false, keep only best SNR
+
+[calibration]
+sigma_clip = 3.0                           # Sigma clipping threshold for zeropoint calculation
+max_iter = 5                               # Maximum iterations for sigma clipping
+match_radius_arcsec = 3.0                  # Cross-match radius for catalog matching
+default_cat_error = 0.03                   # Default catalog magnitude error if not available
+merge_tolerance_arcsec = 2.0               # Tolerance for merging duplicate catalog entries
+convert_vega_to_ab = false                 # If true, convert Vega-based calibrated mags/zeropoints to AB
+
+[forced_photometry]
+enabled = false                            # Whether to perform forced photometry for non-detections
+snr_threshold = 5.0                        # Minimum SNR for forced photometry measurements
+aperture_radius = 5.0                      # Fixed aperture radius in pixels for forced photometry
+
+[limiting_mag]
+method = "analytic"                        # "analytic" (default) or "robust" blank-sky aperture sampling
+
+[limiting_mag.robust]
+n_samples = 2000                           # Number of blank-sky apertures to sample
+mask_dilate_pixels = 5                     # Dilate source/bad-pixel mask by this many pixels
+edge_buffer_pixels = 25                    # Exclude this many edge pixels from sampling
+sigma_estimator = "mad"                    # "mad" (robust) or "std"
+max_draws_multiplier = 20                  # Max random draws = multiplier * n_samples
+random_seed = 0                            # Set <= 0 for nondeterministic behavior
+
+[astrometry]
+enabled = false                            # Whether to attempt astrometric solving
+timeout = 500                              # Timeout in seconds for astrometry.net solver
+
+[logging]
+level = "WARNING"                          # Default logging level
+
+[debug]
+enabled = false                            # Generate 4-panel diagnostic plots for each image during pipeline run
+debug_dir = "soap_debug"                   # Directory for debug plots (organized by observation_id)
+save_intermediates = false                 # Save intermediate products (calibrated images, source catalogs)
+intermediates_dir = "soap_intermediates"   # Directory for intermediate products

@@ -1,0 +1,470 @@
+"""PhotometryResult: QTable wrapper for pipeline output."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import astropy.units as u
+from astropy.coordinates import SkyCoord
+from astropy.table import QTable
+
+from ..config.photometry import canonicalize_filter_band, get_ab_minus_vega_offsets
+from ..utils.time_utils import filter_table_by_date
+
+logger = logging.getLogger("soap")
+
+# Column definitions with units
+_COLUMNS = {
+    "image_file": (str, None),
+    "telescope": (str, None),
+    "filter": (str, None),
+    "exptime": (float, u.s),
+    "mjd": (float, u.d),
+    "jd": (float, u.d),
+    "x_pix": (float, None),
+    "y_pix": (float, None),
+    "ra": (float, u.deg),
+    "dec": (float, u.deg),
+    "flux": (float, None),
+    "flux_err": (float, None),
+    "snr": (float, None),
+    "ins_mag": (float, u.mag),
+    "ins_mag_err": (float, u.mag),
+    "calibrated_mag": (float, u.mag),
+    "calibrated_mag_err": (float, u.mag),
+    "cal_mag_system": (str, None),
+    "zeropoint": (float, u.mag),
+    "zeropoint_err": (float, u.mag),
+    "aperture_id": (int, None),
+    "aperture_radius": (float, None),
+    "fwhm": (float, None),
+    "n_cal_stars": (int, None),
+    "limiting_mag_analytic": (float, u.mag),
+    "limiting_mag_robust": (float, u.mag),
+    "limiting_mag": (float, u.mag),
+    "is_forced": (bool, None),
+    "flag": (int, None),
+}
+
+
+def _normalize_mag_system(system: str | None) -> str | None:
+    if system is None:
+        return None
+    s = str(system).strip().lower()
+    if s == "ab":
+        return "AB"
+    if s == "vega":
+        return "Vega"
+    return None
+
+
+def _empty_table() -> QTable:
+    """Create an empty QTable with the standard columns."""
+    t = QTable()
+    for name, (dtype, unit) in _COLUMNS.items():
+        if dtype is str:
+            t[name] = np.array([], dtype="U256")
+        elif dtype is bool:
+            t[name] = np.array([], dtype=bool)
+        elif dtype is int:
+            t[name] = np.array([], dtype=np.int64)
+        else:
+            col = np.array([], dtype=np.float64)
+            if unit is not None:
+                col = col * unit
+            t[name] = col
+    return t
+
+
+class PhotometryResult:
+    """Wrapper around a QTable holding photometry results.
+
+    Provides convenience methods for filtering, exporting, and
+    extracting single-target lightcurves.
+    """
+
+    def __init__(
+        self,
+        table: QTable | None = None,
+        observation_id: int | None = None,
+        result_dir: str | Path | None = None,
+    ):
+        self.table = table if table is not None else _empty_table()
+        self.observation_id = observation_id
+        self.result_dir = Path(result_dir) if result_dir is not None else None
+
+    def __len__(self) -> int:
+        return len(self.table)
+
+    def __repr__(self) -> str:
+        return f"PhotometryResult({len(self)} measurements)"
+
+    def _new_result(self, table: QTable) -> PhotometryResult:
+        return PhotometryResult(
+            table,
+            observation_id=self.observation_id,
+            result_dir=self.result_dir,
+        )
+
+    def _new_target(self, table: QTable) -> PhotometryTarget:
+        return PhotometryTarget(
+            table,
+            observation_id=self.observation_id,
+            result_dir=self.result_dir,
+        )
+
+    # ------------------------------------------------------------------
+    # Adding data
+    # ------------------------------------------------------------------
+    def add_measurement(self, **kwargs: Any) -> None:
+        """Append a single measurement row."""
+        row = {}
+        for name, (dtype, unit) in _COLUMNS.items():
+            val = kwargs.get(name)
+            if val is None:
+                if dtype is str:
+                    val = ""
+                elif dtype is bool:
+                    val = False
+                elif dtype is int:
+                    val = 0
+                else:
+                    val = np.nan
+            if unit is not None and dtype is float:
+                val = val * unit if not hasattr(val, "unit") else val
+            row[name] = val
+        self.table.add_row(row)
+
+    # ------------------------------------------------------------------
+    # Filtering
+    # ------------------------------------------------------------------
+    def filter_by_date(
+        self,
+        after: str | float | None = None,
+        before: str | float | None = None,
+        days_ago: float | None = None,
+    ) -> PhotometryResult:
+        """Return a new PhotometryResult filtered by date."""
+        filtered = filter_table_by_date(
+            self.table, after=after, before=before, days_ago=days_ago
+        )
+        return self._new_result(filtered)
+
+    def filter_by_band(self, band: str) -> PhotometryResult:
+        """Return a new PhotometryResult for a single filter band."""
+        mask = self.table["filter"] == band
+        return self._new_result(self.table[mask])
+
+    def sort_by_time(self) -> PhotometryResult:
+        """Return a copy sorted by MJD."""
+        t = self.table.copy()
+        t.sort("mjd")
+        return self._new_result(t)
+
+    def filter_by_aperture(self, aperture_id: int) -> PhotometryResult:
+        """Return a new PhotometryResult for a single aperture ID.
+
+        Parameters
+        ----------
+        aperture_id : int
+            Aperture ID to filter (0-indexed).
+
+        Returns
+        -------
+        PhotometryResult
+            Filtered result with only the specified aperture.
+        """
+        mask = self.table["aperture_id"] == aperture_id
+        return self._new_result(self.table[mask])
+
+    def get_best_aperture(self, criterion: str = "snr") -> PhotometryResult:
+        """Select the best aperture for each source based on criterion.
+
+        For multi-aperture photometry results, selects one aperture per source
+        per image based on maximum SNR or flux.
+
+        Parameters
+        ----------
+        criterion : str
+            Selection criterion: "snr" or "flux".
+
+        Returns
+        -------
+        PhotometryResult
+            Result with one row per source (best aperture selected).
+        """
+        if len(self) == 0:
+            return self._new_result(self.table.copy())
+
+        # Check if multi-aperture data exists
+        unique_apertures = np.unique(self.table["aperture_id"])
+        if len(unique_apertures) == 1:
+            # Already single-aperture
+            return self._new_result(self.table.copy())
+
+        # Group by (image, x, y) and select best
+        grouped_rows = []
+        for img in np.unique(self.table["image_file"]):
+            img_mask = self.table["image_file"] == img
+            img_table = self.table[img_mask]
+
+            # Find unique (x, y) positions in this image
+            # Create tuples of (x, y) and find unique ones
+            xy_pairs = list(zip(img_table["x_pix"], img_table["y_pix"]))
+            unique_xy = list(set(xy_pairs))
+
+            # For each unique (x, y) position in this image
+            for x, y in unique_xy:
+                src_mask = (img_table["x_pix"] == x) & (img_table["y_pix"] == y)
+                src_rows = img_table[src_mask]
+
+                if len(src_rows) == 0:
+                    continue
+
+                # Select best based on criterion
+                if criterion == "snr":
+                    best_idx = np.nanargmax(src_rows["snr"])
+                elif criterion == "flux":
+                    best_idx = np.nanargmax(src_rows["flux"])
+                else:
+                    raise ValueError(
+                        f"Unknown criterion: {criterion}. Use 'snr' or 'flux'."
+                    )
+
+                grouped_rows.append(src_rows[best_idx])
+
+        if not grouped_rows:
+            return self._new_result(self.table[:0])
+
+        # Create new table from selected rows
+        result_table = QTable(rows=grouped_rows, names=self.table.colnames)
+        return self._new_result(result_table)
+
+    def extract_target(
+        self,
+        coord: SkyCoord,
+        radius_arcsec: float = 3.0,
+        forced_photometry: bool = False,
+        snr_threshold: float = 3.0,
+    ) -> PhotometryTarget:
+        """Extract measurements for a single sky coordinate.
+
+        Parameters
+        ----------
+        coord : SkyCoord
+            Target position.
+        radius_arcsec : float
+            Match radius.
+        forced_photometry : bool
+            If True, include forced-photometry measurements.
+        snr_threshold : float
+            Minimum SNR for forced photometry.
+
+        Returns
+        -------
+        PhotometryTarget containing only the target.
+        """
+        source_coords = SkyCoord(
+            ra=self.table["ra"],
+            dec=self.table["dec"],
+        )
+        sep = source_coords.separation(coord)
+        mask = sep.arcsec < radius_arcsec
+
+        if not forced_photometry:
+            mask = mask & ~self.table["is_forced"]
+
+        result = self.table[mask]
+
+        if forced_photometry and snr_threshold > 0:
+            snr_ok = result["snr"] >= snr_threshold
+            not_forced = ~result["is_forced"]
+            result = result[snr_ok | not_forced]
+
+        # Deduplicate: keep closest match per image
+        if len(result) > 0:
+            seps = SkyCoord(ra=result["ra"], dec=result["dec"]).separation(coord).arcsec
+
+            # Group by image_file and keep minimum separation
+            unique_images = np.unique(result["image_file"])
+            keep_indices = []
+            for img in unique_images:
+                img_mask = result["image_file"] == img
+                img_indices = np.where(img_mask)[0]
+                img_seps = seps[img_mask]
+                best = img_indices[np.argmin(img_seps)]
+                keep_indices.append(best)
+            result = result[keep_indices]
+
+        return self._new_target(result)
+
+    # ------------------------------------------------------------------
+    # Export methods
+    # ------------------------------------------------------------------
+    def to_csv(self, path: str | Path) -> Path:
+        """Export to CSV."""
+        path = Path(path)
+        self.table.write(path, format="csv", overwrite=True)
+        return path
+
+    def to_ecsv(self, path: str | Path) -> Path:
+        """Export to ECSV (preserves units and metadata)."""
+        path = Path(path)
+        self.table.write(path, format="ascii.ecsv", overwrite=True)
+        return path
+
+    def to_parquet(self, path: str | Path) -> Path:
+        """Export to Parquet via pyarrow."""
+        path = Path(path)
+        self.to_pandas().to_parquet(path, index=False)
+        return path
+
+    def to_json(self, path: str | Path) -> Path:
+        """Export to JSON."""
+        path = Path(path)
+        df = self.to_pandas()
+        df.to_json(path, orient="records", indent=2)
+        return path
+
+    def to_pandas(self):
+        """Convert to a pandas DataFrame."""
+        return self.table.to_pandas()
+
+    def to_polars(self):
+        """Convert to a polars DataFrame."""
+        import polars as pl
+
+        return pl.from_pandas(self.to_pandas())
+
+    def convert_calibrated_mag_system(
+        self,
+        target_system: str,
+        inplace: bool = False,
+    ) -> PhotometryResult:
+        """Convert calibrated magnitudes between AB and Vega systems.
+
+        Parameters
+        ----------
+        target_system : str
+            Magnitude system to convert to ("AB" or "Vega").
+        inplace : bool
+            If True, mutate this result and return self.
+        """
+        target = _normalize_mag_system(target_system)
+        if target is None:
+            raise ValueError("target_system must be 'AB' or 'Vega'.")
+        if "cal_mag_system" not in self.table.colnames:
+            raise ValueError(
+                "Missing 'cal_mag_system' column; cannot convert magnitude systems."
+            )
+
+        table = self.table if inplace else self.table.copy()
+        if len(table) == 0:
+            return self if inplace else self._new_result(table)
+
+        offsets = get_ab_minus_vega_offsets()
+
+        systems_raw = np.asarray(table["cal_mag_system"], dtype="U16")
+        systems = np.array(
+            [_normalize_mag_system(s) or "Unknown" for s in systems_raw], dtype="U16"
+        )
+        filters = np.asarray(table["filter"], dtype="U64")
+        mags = np.asarray(table["calibrated_mag"], dtype=float).copy()
+
+        needs = systems != target
+        convertible = needs & np.isin(systems, ("AB", "Vega"))
+        unknown = needs & ~np.isin(systems, ("AB", "Vega"))
+        if np.any(unknown):
+            bad = sorted(set(systems_raw[unknown].tolist()))
+            raise ValueError(
+                "Cannot convert rows with unknown cal_mag_system values: "
+                + ", ".join(repr(v) for v in bad)
+            )
+
+        # Additive conversion: m_AB = m_Vega + (AB - Vega offset).
+        for band in np.unique(filters[convertible]):
+            band_key = str(band).strip()
+            offset_key = canonicalize_filter_band(band_key)
+            offset = offsets.get(offset_key)
+            if offset is None:
+                raise ValueError(
+                    f"Missing AB-Vega offset for filter {band!r} in config/filters.toml."
+                )
+            idx = convertible & (filters == band)
+            from_ab = idx & (systems == "AB")
+            from_vega = idx & (systems == "Vega")
+            if target == "AB":
+                mags[from_vega] = mags[from_vega] + offset
+            else:  # target == "Vega"
+                mags[from_ab] = mags[from_ab] - offset
+
+        table["calibrated_mag"] = mags * u.mag
+        systems_out = systems_raw.copy()
+        systems_out[convertible] = target
+        table["cal_mag_system"] = systems_out
+
+        if inplace:
+            self.table = table
+            return self
+        return self._new_result(table)
+
+    def to_gcn(
+        self,
+        path: str | Path,
+        start_time: float | None = None,
+        all_results: bool = False,
+    ) -> Path:
+        """Export in GCN circular format."""
+        from ..io.table import write_gcn_table
+
+        return write_gcn_table(
+            self.table, path, start_time=start_time, all_results=all_results
+        )
+
+
+class PhotometryTarget(PhotometryResult):
+    """Single-target photometry result with convenience export."""
+
+    def __repr__(self) -> str:
+        return f"PhotometryTarget({len(self)} measurements)"
+
+    def export(
+        self,
+        format: str = "csv",
+        path: str | Path | None = None,
+        **kwargs,
+    ) -> Path:
+        """Export target results to file.
+
+        Parameters
+        ----------
+        format : str
+            "csv", "ecsv", "parquet", "json", "gcn".
+        path : str or Path, optional
+            Output path. Auto-generated if not provided.
+        """
+        if path is None:
+            ext = {
+                "csv": ".csv",
+                "ecsv": ".ecsv",
+                "parquet": ".parquet",
+                "json": ".json",
+                "gcn": ".txt",
+            }
+            default_name = f"target_photometry{ext.get(format, '.csv')}"
+            if self.result_dir is not None:
+                path = self.result_dir / default_name
+            elif self.observation_id is not None:
+                path = Path("soap_results") / str(self.observation_id) / default_name
+            else:
+                path = Path(default_name)
+
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        export_fn = getattr(self, f"to_{format}", None)
+        if export_fn is None:
+            raise ValueError(f"Unknown export format: {format!r}")
+        return export_fn(path, **kwargs)

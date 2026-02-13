@@ -1,0 +1,131 @@
+# Vizier catalog definitions for photometric calibration
+#
+# Notes:
+# - PS1 (II/349/ps1): uses gmag/rmag/imag/zmag (+ errors e_gmag etc.)
+# - SkyMapper (II/358/smss): uPSF/gPSF/rPSF/iPSF/zPSF (+ errors e_uPSF etc.), has flags + ClassStar
+# - APASS DR9 (II/336/apass9): Johnson Bmag/Vmag and Sloan-like g'mag/r'mag/i'mag (apostrophes in names!)
+#
+
+####################################################################
+###                          Pan-STARRS                          ###
+####################################################################
+
+[catalogs.panstarrs]
+vizier_id = "II/349/ps1"
+ra_column = "RAJ2000"
+dec_column = "DEJ2000"
+search_radius_arcmin = 10.0
+priority = 0
+
+[catalogs.panstarrs.bands]
+g = "gmag"
+r = "rmag"
+i = "imag"
+z = "zmag"
+# Optional (if you ever support PS1 y):
+# y = "ymag"
+
+[catalogs.panstarrs.errors]
+g = "e_gmag"
+r = "e_rmag"
+i = "e_imag"
+z = "e_zmag"
+# y = "e_ymag"
+
+[catalogs.panstarrs.required_columns]
+columns = [
+  "RAJ2000", "DEJ2000",
+  "gmag", "e_gmag",
+  "rmag", "e_rmag",
+  "imag", "e_imag",
+  "zmag", "e_zmag",
+]
+
+####################################################################
+###                          SkyMapper                           ###
+####################################################################
+
+[catalogs.skymapper]
+vizier_id = "II/358/smss"
+ra_column = "RAICRS"
+dec_column = "DEICRS"
+search_radius_arcmin = 10.0
+priority = 1
+
+[catalogs.skymapper.bands]
+u = "uPSF"
+g = "gPSF"
+r = "rPSF"
+i = "iPSF"
+z = "zPSF"
+
+[catalogs.skymapper.errors]
+u = "e_uPSF"
+g = "e_gPSF"
+r = "e_rPSF"
+i = "e_iPSF"
+z = "e_zPSF"
+
+[catalogs.skymapper.required_columns]
+# Include basic quality columns commonly used to cull junk:
+# - flags: SExtractor-style bitwise OR across observations
+# - ClassStar: star/galaxy classifier (0..1)
+columns = [
+  "RAICRS", "DEICRS",
+  "uPSF",
+  "gPSF",
+  "rPSF",
+  "iPSF",
+  "zPSF",
+  "flags", "ClassStar"
+]
+
+[catalogs.skymapper.color_cuts]
+"__g-r_PSF" = { min = -0.4, max = 1.6 }
+"__u-g_PSF" = { min = -0.5, max = 3.5 }
+
+[catalogs.skymapper.renames]
+RAICRS = "RAJ2000"
+DEICRS = "DEJ2000"
+
+####################################################################
+###                            APASS                             ###
+####################################################################
+
+[catalogs.apass]
+vizier_id = "II/336/apass9"
+ra_column = "RAJ2000"
+dec_column = "DEJ2000"
+search_radius_arcmin = 10.0
+priority = 2
+
+[catalogs.apass.bands]
+# Johnson-Cousins anchors
+B = "Bmag"
+V = "Vmag"
+
+# Sloan-like bands in APASS DR9 
+g = "g'mag"
+r = "r'mag"
+i = "i'mag"
+
+[catalogs.apass.errors]
+B = "e_Bmag"
+V = "e_Vmag"
+g = "e_g'mag"
+r = "e_r'mag"
+i = "e_i'mag"
+
+[catalogs.apass.required_columns]
+columns = [
+  "RAJ2000", "DEJ2000",
+  "Bmag", "e_Bmag",
+  "Vmag", "e_Vmag",
+  "B-V", "e_B-V",
+  "g'mag", "e_g'mag",
+  "r'mag", "e_r'mag",
+  "i'mag", "e_i'mag"
+]
+
+[catalogs.apass.color_cuts]
+"B-V" = { min = -0.3, max = 1.7 }
