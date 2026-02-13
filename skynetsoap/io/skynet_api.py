@@ -76,10 +76,9 @@ class SkynetAPI:
         before_dt = datetime.fromisoformat(before) if before is not None else None
 
         downloaded: list[Path] = []
+        skipped: int = 0
         loop = tqdm(observation.exps, disable=not verbose)
         for exp in loop:
-            loop.set_description(f"Downloading {exp.id}")
-
             if exp.center_time is None:
                 logger.debug("Skipping exposure %s: not yet taken.", exp.id)
                 continue
@@ -95,10 +94,29 @@ class SkynetAPI:
             if before_dt is not None and center_time > before_dt:
                 continue
 
+            # Check if file already exists (cache check)
+            expected_filename = f"r{exp.id}.fits"
+            expected_path = path / expected_filename
+            if expected_path.exists():
+                logger.debug("Skipping %s: already exists", expected_filename)
+                downloaded.append(expected_path)
+                skipped += 1
+                loop.set_description(f"Cached {exp.id}")
+                continue
+
+            loop.set_description(f"Downloading {exp.id}")
             filepath = self.download_request.get_fits(
                 out_dir=str(path), reducequiet=1, image=f"r{exp.id}"
             )
             downloaded.append(Path(filepath))
 
-        logger.info("Downloaded %d images to %s", len(downloaded), path)
+        if skipped > 0:
+            logger.info(
+                "Found %d cached images, downloaded %d new images to %s",
+                skipped,
+                len(downloaded) - skipped,
+                path,
+            )
+        else:
+            logger.info("Downloaded %d images to %s", len(downloaded), path)
         return downloaded

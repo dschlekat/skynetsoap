@@ -474,3 +474,157 @@ class Soap:
         if export_fn is None:
             raise ValueError(f"Unknown export format: {format!r}")
         return export_fn(path, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Cache and cleanup utilities
+    # ------------------------------------------------------------------
+    def cache_info(self) -> dict:
+        """Get information about cached files for this observation.
+
+        Returns
+        -------
+        dict
+            Dictionary with cache statistics:
+            - n_images: Number of FITS files in image_dir
+            - n_results: Number of result files in result_dir
+            - total_size_mb: Total size in megabytes
+            - image_dir: Path to image directory
+            - result_dir: Path to result directory
+        """
+        image_files = list(self.image_dir.glob("*.fits"))
+        result_files = (
+            list(self.result_dir.glob("*")) if self.result_dir.exists() else []
+        )
+
+        image_size = sum(f.stat().st_size for f in image_files if f.is_file())
+        result_size = sum(f.stat().st_size for f in result_files if f.is_file())
+        total_size_mb = (image_size + result_size) / (1024 * 1024)
+
+        return {
+            "n_images": len(image_files),
+            "n_results": len(result_files),
+            "total_size_mb": round(total_size_mb, 2),
+            "image_dir": str(self.image_dir),
+            "result_dir": str(self.result_dir),
+        }
+
+    def clear_cache(
+        self,
+        images: bool = True,
+        results: bool = True,
+        confirm: bool = True,
+    ) -> dict:
+        """Clear cached files for this observation.
+
+        Parameters
+        ----------
+        images : bool
+            Clear downloaded FITS images from image_dir.
+        results : bool
+            Clear result files from result_dir.
+        confirm : bool
+            If True, requires user confirmation before deletion.
+
+        Returns
+        -------
+        dict
+            Dictionary with counts of deleted files:
+            - images_deleted: Number of FITS files removed
+            - results_deleted: Number of result files removed
+        """
+        if confirm:
+            msg = f"Delete cache for observation {self.observation_id}?"
+            if images and results:
+                msg += f"\n  - {self.image_dir} (images)"
+                msg += f"\n  - {self.result_dir} (results)"
+            elif images:
+                msg += f"\n  - {self.image_dir} (images only)"
+            elif results:
+                msg += f"\n  - {self.result_dir} (results only)"
+            msg += "\nProceed? (y/n): "
+
+            response = input(msg)
+            if response.lower() != "y":
+                self.logger.info("Cache clear cancelled.")
+                return {"images_deleted": 0, "results_deleted": 0}
+
+        images_deleted = 0
+        results_deleted = 0
+
+        if images and self.image_dir.exists():
+            image_files = list(self.image_dir.glob("*.fits"))
+            for f in image_files:
+                f.unlink()
+                images_deleted += 1
+            self.logger.info(
+                "Deleted %d images from %s", images_deleted, self.image_dir
+            )
+
+        if results and self.result_dir.exists():
+            result_files = list(self.result_dir.glob("*"))
+            for f in result_files:
+                if f.is_file():
+                    f.unlink()
+                    results_deleted += 1
+            self.logger.info(
+                "Deleted %d results from %s", results_deleted, self.result_dir
+            )
+
+        return {"images_deleted": images_deleted, "results_deleted": results_deleted}
+
+    @staticmethod
+    def cleanup_observation(
+        observation_id: int,
+        image_dir: str | Path = "soap_images",
+        result_dir: str | Path = "soap_results",
+        confirm: bool = True,
+    ) -> dict:
+        """Clean up all files for a specific observation (static method).
+
+        Parameters
+        ----------
+        observation_id : int
+            Observation ID to clean up.
+        image_dir : str or Path
+            Base directory for images.
+        result_dir : str or Path
+            Base directory for results.
+        confirm : bool
+            Require confirmation before deletion.
+
+        Returns
+        -------
+        dict
+            Deletion statistics.
+        """
+        import shutil
+
+        img_path = Path(image_dir) / str(observation_id)
+        res_path = Path(result_dir) / str(observation_id)
+
+        if confirm:
+            msg = f"Delete all files for observation {observation_id}?"
+            if img_path.exists():
+                msg += f"\n  - {img_path}"
+            if res_path.exists():
+                msg += f"\n  - {res_path}"
+            msg += "\nProceed? (y/n): "
+
+            response = input(msg)
+            if response.lower() != "y":
+                return {"images_deleted": 0, "results_deleted": 0}
+
+        images_deleted = 0
+        results_deleted = 0
+
+        if img_path.exists():
+            files = list(img_path.glob("*.fits"))
+            images_deleted = len(files)
+            shutil.rmtree(img_path)
+
+        if res_path.exists():
+            files = list(res_path.glob("*"))
+            results_deleted = len([f for f in files if f.is_file()])
+            shutil.rmtree(res_path)
+
+        return {"images_deleted": images_deleted, "results_deleted": results_deleted}
