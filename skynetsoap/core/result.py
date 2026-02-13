@@ -36,9 +36,11 @@ _COLUMNS = {
     "calibrated_mag_err": (float, u.mag),
     "zeropoint": (float, u.mag),
     "zeropoint_err": (float, u.mag),
+    "aperture_id": (int, None),
     "aperture_radius": (float, None),
     "fwhm": (float, None),
     "n_cal_stars": (int, None),
+    "limiting_mag": (float, u.mag),
     "is_forced": (bool, None),
     "flag": (int, None),
 }
@@ -146,6 +148,85 @@ class PhotometryResult:
         t = self.table.copy()
         t.sort("mjd")
         return self._new_result(t)
+
+    def filter_by_aperture(self, aperture_id: int) -> PhotometryResult:
+        """Return a new PhotometryResult for a single aperture ID.
+
+        Parameters
+        ----------
+        aperture_id : int
+            Aperture ID to filter (0-indexed).
+
+        Returns
+        -------
+        PhotometryResult
+            Filtered result with only the specified aperture.
+        """
+        mask = self.table["aperture_id"] == aperture_id
+        return self._new_result(self.table[mask])
+
+    def get_best_aperture(self, criterion: str = "snr") -> PhotometryResult:
+        """Select the best aperture for each source based on criterion.
+
+        For multi-aperture photometry results, selects one aperture per source
+        per image based on maximum SNR or flux.
+
+        Parameters
+        ----------
+        criterion : str
+            Selection criterion: "snr" or "flux".
+
+        Returns
+        -------
+        PhotometryResult
+            Result with one row per source (best aperture selected).
+        """
+        if len(self) == 0:
+            return self._new_result(self.table.copy())
+
+        # Check if multi-aperture data exists
+        unique_apertures = np.unique(self.table["aperture_id"])
+        if len(unique_apertures) == 1:
+            # Already single-aperture
+            return self._new_result(self.table.copy())
+
+        # Group by (image, x, y) and select best
+        grouped_rows = []
+        for img in np.unique(self.table["image_file"]):
+            img_mask = self.table["image_file"] == img
+            img_table = self.table[img_mask]
+
+            # Find unique (x, y) positions in this image
+            # Create tuples of (x, y) and find unique ones
+            xy_pairs = list(zip(img_table["x_pix"], img_table["y_pix"]))
+            unique_xy = list(set(xy_pairs))
+
+            # For each unique (x, y) position in this image
+            for x, y in unique_xy:
+                src_mask = (img_table["x_pix"] == x) & (img_table["y_pix"] == y)
+                src_rows = img_table[src_mask]
+
+                if len(src_rows) == 0:
+                    continue
+
+                # Select best based on criterion
+                if criterion == "snr":
+                    best_idx = np.nanargmax(src_rows["snr"])
+                elif criterion == "flux":
+                    best_idx = np.nanargmax(src_rows["flux"])
+                else:
+                    raise ValueError(
+                        f"Unknown criterion: {criterion}. Use 'snr' or 'flux'."
+                    )
+
+                grouped_rows.append(src_rows[best_idx])
+
+        if not grouped_rows:
+            return self._new_result(self.table[:0])
+
+        # Create new table from selected rows
+        result_table = QTable(rows=grouped_rows, names=self.table.colnames)
+        return self._new_result(result_table)
 
     def extract_target(
         self,

@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from .config.loader import SOAPConfig, load_config
 from .core.image import FITSImage
-from .core.errors import ccd_magnitude_error
+from .core.errors import ccd_magnitude_error, compute_limiting_magnitude
 from .core.result import PhotometryResult
 from .extraction.background import estimate_background
 from .extraction.extractor import extract_sources
@@ -48,8 +48,8 @@ class Soap:
     """Field-wide photometry pipeline runner.
 
     This class orchestrates the full extraction + calibration pipeline
-    across all sources in a field. Target extraction is a post-processing
-    step on the returned ``PhotometryResult``.
+    across all sources in a field. Supports single/multi-aperture photometry,
+    forced photometry at specified positions, and limiting magnitude calculation.
 
     Parameters
     ----------
@@ -71,16 +71,44 @@ class Soap:
     result_dir : str or Path
         Directory for output results.
 
+    Photometry Modes
+    ----------------
+    - **fixed**: Single aperture with user-defined radius
+    - **fwhm_scaled**: Aperture scaled to measured FWHM (default)
+    - **optimal**: Searches for radius that maximizes median SNR
+    - **multi**: Tests multiple radii for curve-of-growth analysis
+
+    By default, all modes return one row per source (best aperture selected).
+    Set `aperture_keep_all=True` to keep all tested apertures.
+
+    Forced Photometry
+    -----------------
+    Measure flux at specified sky positions even if no source is detected.
+    Pass `forced_positions` (list of SkyCoord) to `run()` method.
+    Forced measurements are flagged with `is_forced=True`.
+
+    Limiting Magnitude
+    ------------------
+    Automatically calculated for all measurements (normal and forced) based on
+    5-sigma detection threshold using background RMS and aperture size.
+    Stored in `limiting_mag` column.
+
     Methods
     -------
     download(after=None, before=None, days_ago=None)
         Download FITS images from Skynet with optional date filters.
-    run(images=None, after=None, before=None, days_ago=None)
-        Run the full photometry pipeline on the specified images or all images in ``image_dir``.
+    run(images=None, forced_positions=None, after=None, before=None, days_ago=None)
+        Run the full photometry pipeline. Optionally include forced photometry.
     plot(units="calibrated_mag", path=None, show=False, **kwargs)
         Plot the light curve in the specified units.
     export(format="csv", path=None, **kwargs)
         Export the photometry results to a file in the specified format.
+    debug_image(image_path, save_path=None, show=False)
+        Create diagnostic 4-panel plot for a single image.
+    cache_info()
+        Get information about cached files for this observation.
+    clear_cache(images=True, results=True, confirm=True)
+        Clear cached files for this observation.
     """
 
     def __init__(
@@ -186,6 +214,7 @@ class Soap:
         after: str | None = None,
         before: str | None = None,
         days_ago: float | None = None,
+        forced_positions: list[SkyCoord] | None = None,
     ) -> PhotometryResult:
         """Run the full field-wide photometry pipeline.
 
@@ -196,6 +225,9 @@ class Soap:
             files in ``image_dir``.
         after, before, days_ago
             Date filters (applied to image MJD after loading).
+        forced_positions : list[SkyCoord], optional
+            List of sky coordinates for forced photometry. If provided,
+            measurements will be made at these exact positions.
 
         Returns
         -------
@@ -228,7 +260,9 @@ class Soap:
         for img_path in loop:
             loop.set_description(f"Processing {img_path.name}")
             try:
-                self._process_single_image(img_path, result, ref_catalog_initialized)
+                self._process_single_image(
+                    img_path, result, ref_catalog_initialized, forced_positions
+                )
                 ref_catalog_initialized = True
             except Exception as e:
                 self.logger.warning("Error processing %s: %s", img_path.name, e)
@@ -247,6 +281,7 @@ class Soap:
         img_path: Path,
         result: PhotometryResult,
         ref_catalog_initialized: bool,
+        forced_positions: list[SkyCoord] | None = None,
     ) -> None:
         """Process a single FITS image through the pipeline."""
         image = FITSImage.load(img_path)
@@ -290,82 +325,255 @@ class Soap:
 
         objects = ext_result.objects
 
-        # Aperture selection
-        aperture_r = self._select_aperture(
+        # Get aperture radii (may be multiple for multi-aperture mode)
+        aperture_radii = self._get_aperture_radii(
             data_sub, objects, bkg_result.global_rms, image.gain, ext_result.fwhm
         )
 
-        # Aperture photometry on all sources
-        flux, flux_err, flag = sum_circle(
+        # For calibration, we need to perform one measurement to get zeropoint
+        # Use the first aperture radius for this
+        calib_aperture_r = aperture_radii[0]
+        flux_cal, flux_err_cal, _ = sum_circle(
             data_sub,
             objects["x"],
             objects["y"],
-            aperture_r,
+            calib_aperture_r,
             err=bkg_result.global_rms,
             gain=image.gain,
         )
 
-        # Filter out negative/zero flux
-        valid = flux > 0
-        if not np.any(valid):
+        # Filter valid sources for calibration
+        valid_cal = flux_cal > 0
+        if not np.any(valid_cal):
+            self.logger.info("No valid sources for calibration in %s", img_path.name)
             return
 
-        flux = flux[valid]
-        flux_err = flux_err[valid]
-        flag = flag[valid]
-        x = objects["x"][valid]
-        y = objects["y"][valid]
+        # Get calibration zeropoint using valid sources
+        flux_cal_valid = flux_cal[valid_cal]
+        flux_err_cal_valid = flux_err_cal[valid_cal]
+        x_cal = objects["x"][valid_cal]
+        y_cal = objects["y"][valid_cal]
 
-        # Instrumental magnitudes
-        ins_mag = -2.5 * np.log10(flux)
-        ins_mag_err = 1.0857 * (flux_err / flux)
+        ins_mag_cal = -2.5 * np.log10(flux_cal_valid)
+        ins_mag_err_cal = 1.0857 * (flux_err_cal_valid / flux_cal_valid)
 
-        # Convert to sky coordinates
-        world_coords = image.wcs.pixel_to_world(x, y)
-        if not hasattr(world_coords, "__len__"):
-            world_coords = SkyCoord([world_coords])
+        world_coords_cal = image.wcs.pixel_to_world(x_cal, y_cal)
+        if not hasattr(world_coords_cal, "__len__"):
+            world_coords_cal = SkyCoord([world_coords_cal])
 
-        # Calibration
         zp, zp_err, match_mask = self.calibrator.calibrate_image(
-            image, ins_mag, ins_mag_err, world_coords, image.filter_name
+            image, ins_mag_cal, ins_mag_err_cal, world_coords_cal, image.filter_name
         )
+        n_cal = int(np.sum(match_mask)) if match_mask is not None else 0
 
-        if np.isnan(zp):
-            cal_mag = np.full_like(ins_mag, np.nan)
-            cal_mag_err = np.full_like(ins_mag_err, np.nan)
-            n_cal = 0
-        else:
-            cal_mag = ins_mag + zp
-            n_pix = np.pi * aperture_r**2
-            n_bkgpix = np.pi * (3 * aperture_r) ** 2
-            cal_mag_err = ccd_magnitude_error(
-                flux=flux,
+        # Multi-aperture photometry loop
+        for aperture_id, aperture_r in enumerate(aperture_radii):
+            # Aperture photometry on all sources
+            flux, flux_err, flag = sum_circle(
+                data_sub,
+                objects["x"],
+                objects["y"],
+                aperture_r,
+                err=bkg_result.global_rms,
                 gain=image.gain,
-                n_pix=n_pix,
-                background=bkg_result.global_back,
-                rdnoise=image.rdnoise,
-                n_bkgpix=n_bkgpix,
-                sigma_bkg=bkg_result.global_rms,
-                sigma_zp=zp_err,
             )
-            cal_mag_err = np.atleast_1d(cal_mag_err)
-            n_cal = int(np.sum(match_mask)) if match_mask is not None else 0
 
-        snr = flux / flux_err
+            # Filter out negative/zero flux
+            valid = flux > 0
+            if not np.any(valid):
+                continue
+
+            flux_valid = flux[valid]
+            flux_err_valid = flux_err[valid]
+            flag_valid = flag[valid]
+            x = objects["x"][valid]
+            y = objects["y"][valid]
+
+            # Instrumental magnitudes
+            ins_mag = -2.5 * np.log10(flux_valid)
+            ins_mag_err = 1.0857 * (flux_err_valid / flux_valid)
+
+            # Convert to sky coordinates
+            world_coords = image.wcs.pixel_to_world(x, y)
+            if not hasattr(world_coords, "__len__"):
+                world_coords = SkyCoord([world_coords])
+
+            # Calibrated magnitudes
+            if np.isnan(zp):
+                cal_mag = np.full_like(ins_mag, np.nan)
+                cal_mag_err = np.full_like(ins_mag_err, np.nan)
+            else:
+                cal_mag = ins_mag + zp
+                n_pix = np.pi * aperture_r**2
+                n_bkgpix = np.pi * (3 * aperture_r) ** 2
+                cal_mag_err = ccd_magnitude_error(
+                    flux=flux_valid,
+                    gain=image.gain,
+                    n_pix=n_pix,
+                    background=bkg_result.global_back,
+                    rdnoise=image.rdnoise,
+                    n_bkgpix=n_bkgpix,
+                    sigma_bkg=bkg_result.global_rms,
+                    sigma_zp=zp_err,
+                )
+                cal_mag_err = np.atleast_1d(cal_mag_err)
+
+            snr = flux_valid / flux_err_valid
+
+            # Limiting magnitude
+            limiting_mag = compute_limiting_magnitude(
+                zp, bkg_result.global_rms, aperture_r, n_sigma=5.0
+            )
+
+            # Append all sources to result
+            for i in range(len(flux_valid)):
+                result.add_measurement(
+                    image_file=img_path.name,
+                    telescope=image.telescope,
+                    filter=image.filter_name,
+                    exptime=image.exptime,
+                    mjd=image.mjd,
+                    jd=image.mid_jd,
+                    x_pix=float(x[i]),
+                    y_pix=float(y[i]),
+                    ra=float(world_coords[i].ra.deg),
+                    dec=float(world_coords[i].dec.deg),
+                    flux=float(flux_valid[i]),
+                    flux_err=float(flux_err_valid[i]),
+                    snr=float(snr[i]),
+                    ins_mag=float(ins_mag[i]),
+                    ins_mag_err=float(ins_mag_err[i]),
+                    calibrated_mag=float(cal_mag[i]),
+                    calibrated_mag_err=float(cal_mag_err[i]),
+                    zeropoint=float(zp) if not np.isnan(zp) else np.nan,
+                    zeropoint_err=float(zp_err) if not np.isnan(zp_err) else np.nan,
+                    aperture_id=aperture_id,
+                    aperture_radius=aperture_r,
+                    fwhm=ext_result.fwhm,
+                    n_cal_stars=n_cal,
+                    limiting_mag=limiting_mag,
+                    is_forced=False,
+                    flag=int(flag_valid[i]),
+                )
+
+        # Forced photometry at specified positions
+        if forced_positions is not None:
+            forced_aperture_r = self.config.forced_photometry_aperture_radius
+
+            # Convert forced sky positions to pixel coordinates
+            # Handle both single and multiple positions
+            if len(forced_positions) == 1:
+                forced_pix = image.wcs.world_to_pixel(forced_positions[0])
+                forced_x = np.array([forced_pix[0]])
+                forced_y = np.array([forced_pix[1]])
+            else:
+                # Combine into single SkyCoord for batch conversion
+                combined_coords = SkyCoord(
+                    ra=[c.ra for c in forced_positions],
+                    dec=[c.dec for c in forced_positions],
+                )
+                forced_pix = image.wcs.world_to_pixel(combined_coords)
+                forced_x = np.array(forced_pix[0])
+                forced_y = np.array(forced_pix[1])
+
+            # Perform aperture photometry at forced positions
+            flux_forced, flux_err_forced, flag_forced = sum_circle(
+                data_sub,
+                forced_x,
+                forced_y,
+                forced_aperture_r,
+                err=bkg_result.global_rms,
+                gain=image.gain,
+            )
+
+            # Calculate limiting magnitude for forced photometry
+            limiting_mag_forced = compute_limiting_magnitude(
+                zp, bkg_result.global_rms, forced_aperture_r, n_sigma=5.0
+            )
+
+            # Process each forced position
+            for i in range(len(forced_positions)):
+                flux_i = flux_forced[i]
+                flux_err_i = flux_err_forced[i]
+
+                # Handle negative/zero flux
+                if flux_i <= 0:
+                    ins_mag_i = np.nan
+                    ins_mag_err_i = np.nan
+                    snr_i = np.nan
+                else:
+                    ins_mag_i = -2.5 * np.log10(flux_i)
+                    ins_mag_err_i = 1.0857 * (flux_err_i / flux_i)
+                    snr_i = flux_i / flux_err_i
+
+                # Calibrated magnitude
+                if np.isnan(zp) or np.isnan(ins_mag_i):
+                    cal_mag_i = np.nan
+                    cal_mag_err_i = np.nan
+                else:
+                    cal_mag_i = ins_mag_i + zp
+                    n_pix = np.pi * forced_aperture_r**2
+                    n_bkgpix = np.pi * (3 * forced_aperture_r) ** 2
+                    cal_mag_err_i = ccd_magnitude_error(
+                        flux=flux_i,
+                        gain=image.gain,
+                        n_pix=n_pix,
+                        background=bkg_result.global_back,
+                        rdnoise=image.rdnoise,
+                        n_bkgpix=n_bkgpix,
+                        sigma_bkg=bkg_result.global_rms,
+                        sigma_zp=zp_err,
+                    )
+
+                result.add_measurement(
+                    image_file=img_path.name,
+                    telescope=image.telescope,
+                    filter=image.filter_name,
+                    exptime=image.exptime,
+                    mjd=image.mjd,
+                    jd=image.mid_jd,
+                    x_pix=float(forced_x[i]),
+                    y_pix=float(forced_y[i]),
+                    ra=float(forced_positions[i].ra.deg),
+                    dec=float(forced_positions[i].dec.deg),
+                    flux=float(flux_i),
+                    flux_err=float(flux_err_i),
+                    snr=float(snr_i) if not np.isnan(snr_i) else np.nan,
+                    ins_mag=float(ins_mag_i) if not np.isnan(ins_mag_i) else np.nan,
+                    ins_mag_err=float(ins_mag_err_i)
+                    if not np.isnan(ins_mag_err_i)
+                    else np.nan,
+                    calibrated_mag=float(cal_mag_i)
+                    if not np.isnan(cal_mag_i)
+                    else np.nan,
+                    calibrated_mag_err=float(cal_mag_err_i)
+                    if not np.isnan(cal_mag_err_i)
+                    else np.nan,
+                    zeropoint=float(zp) if not np.isnan(zp) else np.nan,
+                    zeropoint_err=float(zp_err) if not np.isnan(zp_err) else np.nan,
+                    aperture_id=0,
+                    aperture_radius=forced_aperture_r,
+                    fwhm=ext_result.fwhm,
+                    n_cal_stars=n_cal,
+                    limiting_mag=limiting_mag_forced,
+                    is_forced=True,
+                    flag=int(flag_forced[i]),
+                )
 
         # Save intermediate products if enabled
         if self.config.save_intermediates:
+            # Use data from last aperture for intermediate products
             self._save_intermediates(
                 img_path,
                 image,
                 bkg_result,
                 data_sub,
                 ext_result,
-                x,
-                y,
-                world_coords,
-                flux,
-                ins_mag,
+                x_cal,
+                y_cal,
+                world_coords_cal,
+                flux_cal_valid,
+                ins_mag_cal,
                 zp,
             )
 
@@ -375,8 +583,8 @@ class Soap:
             debug_dir.mkdir(parents=True, exist_ok=True)
             debug_path = debug_dir / f"{img_path.stem}_debug.png"
 
-            # Prepare data for debug plot
-            source_coords = np.column_stack([x, y])
+            # Prepare data for debug plot (use calibration aperture)
+            source_coords = np.column_stack([x_cal, y_cal])
             if (
                 hasattr(self.calibrator, "_cached_ref")
                 and self.calibrator._cached_ref is not None
@@ -395,57 +603,38 @@ class Soap:
                 image=image,
                 bkg_result=bkg_result,
                 source_coords=source_coords,
-                aperture_radius=aperture_r,
+                aperture_radius=calib_aperture_r,
                 ref_coords=ref_coords,
                 matched_mask=match_mask,
                 save_path=debug_path,
             )
 
-        # Append all sources to result
-        for i in range(len(flux)):
-            result.add_measurement(
-                image_file=img_path.name,
-                telescope=image.telescope,
-                filter=image.filter_name,
-                exptime=image.exptime,
-                mjd=image.mjd,
-                jd=image.mid_jd,
-                x_pix=float(x[i]),
-                y_pix=float(y[i]),
-                ra=float(world_coords[i].ra.deg),
-                dec=float(world_coords[i].dec.deg),
-                flux=float(flux[i]),
-                flux_err=float(flux_err[i]),
-                snr=float(snr[i]),
-                ins_mag=float(ins_mag[i]),
-                ins_mag_err=float(ins_mag_err[i]),
-                calibrated_mag=float(cal_mag[i]),
-                calibrated_mag_err=float(cal_mag_err[i]),
-                zeropoint=float(zp) if not np.isnan(zp) else np.nan,
-                zeropoint_err=float(zp_err) if not np.isnan(zp_err) else np.nan,
-                aperture_radius=aperture_r,
-                fwhm=ext_result.fwhm,
-                n_cal_stars=n_cal,
-                is_forced=False,
-                flag=int(flag[i]),
-            )
-
-    def _select_aperture(
+    def _get_aperture_radii(
         self,
         data: np.ndarray,
         objects: np.ndarray,
         err: float,
         gain: float,
         fwhm: float,
-    ) -> float:
-        """Select aperture radius based on config mode."""
+    ) -> list[float]:
+        """Get aperture radii based on config mode.
+
+        Returns
+        -------
+        list[float]
+            List of aperture radii in pixels. For multi mode, returns all
+            radii from config. For other modes, returns a single-element list.
+        """
         mode = self.config.aperture_mode
 
+        if mode == "multi":
+            return self.config.aperture_radii
+
         if mode == "fixed":
-            return self.config.aperture_fixed_radius
+            return [self.config.aperture_fixed_radius]
 
         if mode == "optimal":
-            return compute_optimal_aperture(
+            r = compute_optimal_aperture(
                 data,
                 objects["x"],
                 objects["y"],
@@ -455,13 +644,31 @@ class Soap:
                 max_r=self.config.aperture_max_radius,
                 step=self.config.aperture_step,
             )
+            return [r]
 
-        return fwhm_scaled_radius(
+        # Default: fwhm_scaled
+        r = fwhm_scaled_radius(
             fwhm,
             scale=self.config.aperture_scale,
             min_r=self.config.aperture_min_radius,
             max_r=self.config.aperture_max_radius,
         )
+        return [r]
+
+    def _select_aperture(
+        self,
+        data: np.ndarray,
+        objects: np.ndarray,
+        err: float,
+        gain: float,
+        fwhm: float,
+    ) -> float:
+        """Select aperture radius based on config mode.
+
+        Deprecated: Use _get_aperture_radii instead.
+        """
+        radii = self._get_aperture_radii(data, objects, err, gain, fwhm)
+        return radii[0]
 
     def _save_intermediates(
         self,

@@ -41,6 +41,10 @@ class SOAPConfig:
     aperture_min_radius: float = 3.0
     aperture_max_radius: float = 20.0
     aperture_step: float = 0.5
+    aperture_radii: list[float] = field(
+        default_factory=lambda: [2.0, 3.0, 5.0, 7.0, 10.0]
+    )
+    aperture_keep_all: bool = False
 
     # Calibration
     calibration_sigma_clip: float = 3.0
@@ -52,6 +56,7 @@ class SOAPConfig:
     # Forced photometry
     forced_photometry_enabled: bool = False
     forced_photometry_snr_threshold: float = 3.0
+    forced_photometry_aperture_radius: float = 5.0
 
     # Astrometry
     astrometry_enabled: bool = False
@@ -86,6 +91,8 @@ class SOAPConfig:
         cfg.aperture_min_radius = ap.get("min_radius", cfg.aperture_min_radius)
         cfg.aperture_max_radius = ap.get("max_radius", cfg.aperture_max_radius)
         cfg.aperture_step = ap.get("step", cfg.aperture_step)
+        cfg.aperture_radii = ap.get("radii", cfg.aperture_radii)
+        cfg.aperture_keep_all = ap.get("keep_all", cfg.aperture_keep_all)
 
         cal = d.get("calibration", {})
         cfg.calibration_sigma_clip = cal.get("sigma_clip", cfg.calibration_sigma_clip)
@@ -104,6 +111,9 @@ class SOAPConfig:
         cfg.forced_photometry_enabled = fp.get("enabled", cfg.forced_photometry_enabled)
         cfg.forced_photometry_snr_threshold = fp.get(
             "snr_threshold", cfg.forced_photometry_snr_threshold
+        )
+        cfg.forced_photometry_aperture_radius = fp.get(
+            "aperture_radius", cfg.forced_photometry_aperture_radius
         )
 
         ast = d.get("astrometry", {})

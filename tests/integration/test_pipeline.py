@@ -197,3 +197,232 @@ class TestExportFormats:
 
         assert Path(returned_path).exists()
         assert Path(returned_path).stat().st_size > 0
+
+
+class TestMultiAperturePhotometry:
+    """Multi-aperture photometry tests."""
+
+    def test_multi_aperture_mode(self, mock_fits_image, tmp_path, soap_config):
+        """Run pipeline in multi-aperture mode and verify N rows per source."""
+        # Set multi-aperture mode with 3 radii
+        soap_config.aperture_mode = "multi"
+        soap_config.aperture_radii = [3.0, 5.0, 7.0]
+        soap_config.aperture_keep_all = True
+
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        result = s.run()
+
+        # Verify we have measurements
+        assert len(result) > 0
+
+        # Verify aperture_id column exists and has multiple values
+        aperture_ids = np.unique(result.table["aperture_id"])
+        assert len(aperture_ids) == 3
+        assert set(aperture_ids) == {0, 1, 2}
+
+        # Each source should have 3 measurements (one per aperture)
+        # Group by (image_file, x_pix, y_pix) and count
+        unique_sources = set()
+        for row in result.table:
+            unique_sources.add((row["image_file"], row["x_pix"], row["y_pix"]))
+
+        # Total measurements should be num_sources * num_apertures
+        expected_total = len(unique_sources) * 3
+        assert len(result) == expected_total
+
+    def test_get_best_aperture_integration(
+        self, mock_fits_image, tmp_path, soap_config
+    ):
+        """Verify get_best_aperture reduces multi-aperture results."""
+        # Set multi-aperture mode
+        soap_config.aperture_mode = "multi"
+        soap_config.aperture_radii = [3.0, 5.0, 7.0]
+        soap_config.aperture_keep_all = True
+
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        result = s.run()
+        assert len(result) > 0
+
+        # Get the number of unique sources
+        unique_sources = set()
+        for row in result.table:
+            unique_sources.add((row["image_file"], row["x_pix"], row["y_pix"]))
+        n_sources = len(unique_sources)
+
+        # Apply get_best_aperture
+        best = result.get_best_aperture(criterion="snr")
+
+        # Should have exactly n_sources measurements (one per source)
+        assert len(best) == n_sources
+
+        # All aperture_ids should be valid
+        assert all(0 <= aid <= 2 for aid in best.table["aperture_id"])
+
+    def test_filter_by_aperture_integration(
+        self, mock_fits_image, tmp_path, soap_config
+    ):
+        """Verify filter_by_aperture returns correct subset."""
+        soap_config.aperture_mode = "multi"
+        soap_config.aperture_radii = [3.0, 5.0, 7.0]
+        soap_config.aperture_keep_all = True
+
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        result = s.run()
+        assert len(result) > 0
+
+        # Filter for aperture_id = 1
+        filtered = result.filter_by_aperture(1)
+
+        # All results should have aperture_id = 1
+        assert all(row["aperture_id"] == 1 for row in filtered.table)
+
+        # Should have approximately 1/3 of the total measurements
+        assert len(filtered) > 0
+        assert len(filtered) < len(result)
+
+
+class TestForcedPhotometry:
+    """Forced photometry tests."""
+
+    def test_forced_photometry(
+        self, mock_fits_image, tmp_path, soap_config, known_sources
+    ):
+        """Run pipeline with forced photometry at known positions."""
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        # Use first 3 injected source positions for forced photometry
+        forced_coords = [known_sources.sky_coords[i] for i in range(3)]
+
+        result = s.run(forced_positions=forced_coords)
+
+        # Verify we have measurements
+        assert len(result) > 0
+
+        # Verify is_forced column exists
+        assert "is_forced" in result.table.colnames
+
+        # Count forced photometry measurements
+        n_forced = sum(result.table["is_forced"])
+        assert n_forced == 3
+
+        # Verify forced measurements are at correct positions
+        forced_mask = result.table["is_forced"]
+        forced_result = result.table[forced_mask]
+
+        for i, coord in enumerate(forced_coords):
+            # Find the measurement closest to this coordinate
+            forced_coords_result = SkyCoord(
+                ra=forced_result["ra"],
+                dec=forced_result["dec"],
+                unit="deg",
+            )
+            seps = forced_coords_result.separation(coord).arcsec
+
+            # At least one forced measurement should be very close to the input position
+            assert np.min(seps) < 1.0  # Within 1 arcsec
+
+    def test_forced_photometry_with_limiting_mag(
+        self, mock_fits_image, tmp_path, soap_config, known_sources
+    ):
+        """Verify forced photometry includes limiting magnitude."""
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        # Use first injected source position
+        forced_coords = [known_sources.sky_coords[0]]
+
+        result = s.run(forced_positions=forced_coords)
+
+        # Get forced measurements
+        forced_mask = result.table["is_forced"]
+        forced_result = result.table[forced_mask]
+
+        assert len(forced_result) > 0
+
+        # Verify limiting_mag is not NaN
+        assert all(~np.isnan(forced_result["limiting_mag"]))
+
+        # Limiting magnitude should be fainter than calibrated magnitude
+        for row in forced_result:
+            if not np.isnan(row["calibrated_mag"]):
+                assert row["limiting_mag"] > row["calibrated_mag"]
+
+
+class TestLimitingMagnitude:
+    """Limiting magnitude calculation tests."""
+
+    def test_limiting_magnitude_calculated(
+        self, mock_fits_image, tmp_path, soap_config
+    ):
+        """Verify limiting magnitude is calculated for all measurements."""
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        result = s.run()
+
+        assert len(result) > 0
+
+        # Verify limiting_mag column exists
+        assert "limiting_mag" in result.table.colnames
+
+        # All non-forced measurements should have limiting_mag
+        normal_mask = ~result.table["is_forced"]
+        normal_result = result.table[normal_mask]
+
+        if len(normal_result) > 0:
+            # All should have limiting_mag (may be NaN if zeropoint failed)
+            assert all(~np.isnan(normal_result["limiting_mag"]))
+
+            # Limiting magnitude should be fainter than detected magnitudes
+            for row in normal_result:
+                if not np.isnan(row["calibrated_mag"]):
+                    assert row["limiting_mag"] > row["calibrated_mag"]

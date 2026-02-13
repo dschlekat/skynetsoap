@@ -87,3 +87,49 @@ def ccd_magnitude_error(
     sigma_inst = (2.5 / np.log(10)) * (sigma_flux / flux)
     sigma_m = np.sqrt(sigma_inst**2 + sigma_zp**2)
     return sigma_m
+
+
+def compute_limiting_magnitude(
+    zeropoint: float,
+    background_rms: float,
+    aperture_radius: float,
+    n_sigma: float = 5.0,
+) -> float:
+    """Compute the limiting magnitude for an image.
+
+    The limiting magnitude is the faintest magnitude detectable at a given
+    confidence level (typically 5-sigma) based on background noise.
+
+    Formula: m_lim = ZP - 2.5 * log10(n_sigma * sigma_sky * sqrt(n_pix))
+
+    Parameters
+    ----------
+    zeropoint : float
+        Photometric zeropoint (mag).
+    background_rms : float
+        Background RMS noise (counts/pixel).
+    aperture_radius : float
+        Aperture radius in pixels.
+    n_sigma : float
+        Detection significance threshold (default: 5.0).
+
+    Returns
+    -------
+    float
+        Limiting magnitude (mag).
+    """
+    if np.isnan(zeropoint) or zeropoint == 0:
+        return np.nan
+
+    # Aperture area in pixels
+    n_pix = np.pi * aperture_radius**2
+
+    # Minimum detectable flux (in sky background units)
+    min_flux = n_sigma * background_rms * np.sqrt(n_pix)
+
+    # Convert to magnitude
+    if min_flux <= 0:
+        return np.nan
+
+    limiting_mag = zeropoint - 2.5 * np.log10(min_flux)
+    return float(limiting_mag)
