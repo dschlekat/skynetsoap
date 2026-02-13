@@ -32,7 +32,6 @@ warnings.simplefilter("ignore", category=AstropyWarning)
 
 # TODO: Add clarity for magnitude systems in the results, e.g. by including a "cal_mag_system" column that specifies the system of the calibrated magnitudes (e.g. "AB", "Vega"). Stick with the system used by the input data, but provide a way to convert if needed.
 # TODO: Add debugging method to inspect individual images with plotting of sources, apertures, etc.
-# TODO: Add better cache management for intermediate products, especially downloaded images, to speed up repeated runs with different configs or parameters.
 # TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog.
 # TODO: Add util methods to clean up downloaded images and results for a given observation ID, or to manage disk usage across multiple runs.
 # TODO: Add options to save intermediate products like calibrated images, source catalogs, etc.
@@ -215,6 +214,7 @@ class Soap:
         before: str | None = None,
         days_ago: float | None = None,
         forced_positions: list[SkyCoord] | None = None,
+        debug: bool | None = None,
     ) -> PhotometryResult:
         """Run the full field-wide photometry pipeline.
 
@@ -228,6 +228,9 @@ class Soap:
         forced_positions : list[SkyCoord], optional
             List of sky coordinates for forced photometry. If provided,
             measurements will be made at these exact positions.
+        debug : bool, optional
+            Enable debug plotting for this run. If None, uses config setting.
+            If True, generates 4-panel diagnostic plots for each image.
 
         Returns
         -------
@@ -256,12 +259,19 @@ class Soap:
         )
         ref_catalog_initialized = False
 
+        # Determine debug mode (parameter overrides config)
+        debug_mode = debug if debug is not None else self.config.debug_mode
+
         loop = tqdm(image_paths, desc="Processing", disable=not self.verbose)
         for img_path in loop:
             loop.set_description(f"Processing {img_path.name}")
             try:
                 self._process_single_image(
-                    img_path, result, ref_catalog_initialized, forced_positions
+                    img_path,
+                    result,
+                    ref_catalog_initialized,
+                    forced_positions,
+                    debug_mode,
                 )
                 ref_catalog_initialized = True
             except Exception as e:
@@ -282,6 +292,7 @@ class Soap:
         result: PhotometryResult,
         ref_catalog_initialized: bool,
         forced_positions: list[SkyCoord] | None = None,
+        debug_mode: bool = False,
     ) -> None:
         """Process a single FITS image through the pipeline."""
         image = FITSImage.load(img_path)
@@ -591,7 +602,7 @@ class Soap:
             )
 
         # Generate debug plot if enabled
-        if self.config.debug_mode:
+        if debug_mode:
             debug_dir = Path(self.config.debug_dir) / str(self.observation_id)
             debug_dir.mkdir(parents=True, exist_ok=True)
             debug_path = debug_dir / f"{img_path.stem}_debug.png"
@@ -1016,9 +1027,11 @@ class Soap:
             match_mask = None
         else:
             objects = ext_result.objects
-            aperture_r = self._select_aperture(
+            aperture_radii = self._get_aperture_radii(
                 data_sub, objects, bkg_result.global_rms, image.gain, ext_result.fwhm
             )
+            # Use first aperture for debugging
+            aperture_r = aperture_radii[0]
 
             # Get source coordinates
             x = objects["x"]
@@ -1051,10 +1064,12 @@ class Soap:
                 match_mask = None
 
         # Determine save path
-        if save_path is None and self.config.debug_mode:
+        if save_path is None:
             debug_dir = Path(self.config.debug_dir) / str(self.observation_id)
             debug_dir.mkdir(parents=True, exist_ok=True)
-            save_path = debug_dir / f"{img_path.stem}_debug.png"
+            final_save_path = debug_dir / f"{img_path.stem}_debug.png"
+        else:
+            final_save_path = Path(save_path)
 
         # Create the plot
         fig = create_debug_plot(
@@ -1064,7 +1079,7 @@ class Soap:
             aperture_radius=aperture_r,
             ref_coords=ref_coords,
             matched_mask=match_mask,
-            save_path=save_path,
+            save_path=final_save_path,
         )
 
         if show:

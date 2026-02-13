@@ -150,7 +150,25 @@ def create_debug_plot(
     Figure
         The matplotlib figure object.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    # Use WCS projection if available
+    if image.has_wcs:
+        fig = plt.figure(figsize=(14, 11))
+
+        # Create subplots with WCS projection where appropriate
+        ax1 = fig.add_subplot(2, 2, 1, projection=image.wcs)
+        ax2 = fig.add_subplot(2, 2, 2, projection=image.wcs)
+        ax3 = fig.add_subplot(2, 2, 3, projection=image.wcs)
+        ax4 = fig.add_subplot(2, 2, 4, projection=image.wcs)
+        axes = np.array([[ax1, ax2], [ax3, ax4]])
+
+        # Configure WCS axes
+        for ax in [ax1, ax2, ax3, ax4]:
+            ax.coords[0].set_axislabel("RA")
+            ax.coords[1].set_axislabel("Dec")
+            ax.coords.grid(color="white", alpha=0.3, linestyle="solid", linewidth=0.5)
+    else:
+        fig, axes = plt.subplots(2, 2, figsize=(14, 11))
+
     fig.suptitle(f"Debug: {image.path.name}", fontsize=14, fontweight="bold")
 
     # Panel 1: Original image
@@ -158,16 +176,18 @@ def create_debug_plot(
     vmin, vmax = np.percentile(image.data[~np.isnan(image.data)], [1, 99])
     im1 = ax1.imshow(image.data, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
     ax1.set_title("Original Image")
-    ax1.set_xlabel("X (pixels)")
-    ax1.set_ylabel("Y (pixels)")
+    if not image.has_wcs:
+        ax1.set_xlabel("X (pixels)")
+        ax1.set_ylabel("Y (pixels)")
     plt.colorbar(im1, ax=ax1, label="Counts")
 
     # Panel 2: Background map
     ax2 = axes[0, 1]
     im2 = ax2.imshow(bkg_result.background, origin="lower", cmap="viridis")
     ax2.set_title(f"Background (RMS={bkg_result.global_rms:.2f})")
-    ax2.set_xlabel("X (pixels)")
-    ax2.set_ylabel("Y (pixels)")
+    if not image.has_wcs:
+        ax2.set_xlabel("X (pixels)")
+        ax2.set_ylabel("Y (pixels)")
     plt.colorbar(im2, ax=ax2, label="Counts")
 
     # Panel 3: Background-subtracted image with sources
@@ -178,8 +198,9 @@ def create_debug_plot(
         data_sub, origin="lower", cmap="gray", vmin=vmin_sub, vmax=vmax_sub
     )
     ax3.set_title("Background-Subtracted + Sources")
-    ax3.set_xlabel("X (pixels)")
-    ax3.set_ylabel("Y (pixels)")
+    if not image.has_wcs:
+        ax3.set_xlabel("X (pixels)")
+        ax3.set_ylabel("Y (pixels)")
     plt.colorbar(im3, ax=ax3, label="Counts")
 
     # Overlay extracted sources
@@ -193,6 +214,7 @@ def create_debug_plot(
             edgecolors="red",
             linewidths=1,
             label="Extracted",
+            transform=ax3.get_transform("pixel") if image.has_wcs else ax3.transData,
         )
 
         # Draw apertures if radius provided
@@ -205,69 +227,73 @@ def create_debug_plot(
                     edgecolor="cyan",
                     linewidth=1,
                     alpha=0.7,
+                    transform=ax3.get_transform("pixel")
+                    if image.has_wcs
+                    else ax3.transData,
                 )
                 ax3.add_patch(circle)
 
         ax3.legend(loc="upper right")
 
-    # Panel 4: Matched reference stars
+    # Panel 4: Background-subtracted with apertures highlighted
     ax4 = axes[1, 1]
     im4 = ax4.imshow(
         data_sub, origin="lower", cmap="gray", vmin=vmin_sub, vmax=vmax_sub
     )
-    ax4.set_title("Calibration Matches")
-    ax4.set_xlabel("X (pixels)")
-    ax4.set_ylabel("Y (pixels)")
+    ax4.set_title("Aperture Photometry")
+    if not image.has_wcs:
+        ax4.set_xlabel("X (pixels)")
+        ax4.set_ylabel("Y (pixels)")
     plt.colorbar(im4, ax=ax4, label="Counts")
 
-    # Overlay matched sources vs unmatched
-    if source_coords is not None and matched_mask is not None:
+    # Overlay all sources with apertures
+    if source_coords is not None:
         x, y = source_coords[:, 0], source_coords[:, 1]
-        matched = matched_mask
-        unmatched = ~matched_mask
 
-        if np.any(unmatched):
-            ax4.scatter(
-                x[unmatched],
-                y[unmatched],
-                s=50,
-                facecolors="none",
-                edgecolors="orange",
-                linewidths=1,
-                label="Unmatched",
-                marker="o",
-            )
-        if np.any(matched):
-            ax4.scatter(
-                x[matched],
-                y[matched],
-                s=80,
-                facecolors="none",
-                edgecolors="lime",
-                linewidths=2,
-                label="Matched",
-                marker="s",
-            )
-
-        ax4.legend(loc="upper right")
-
-    # Overlay reference catalog positions if provided
-    if ref_coords is not None and image.has_wcs:
-        ref_pix = image.wcs.world_to_pixel(ref_coords)
-        if hasattr(ref_pix[0], "__len__"):
-            ref_x, ref_y = ref_pix
-        else:
-            ref_x, ref_y = [ref_pix[0]], [ref_pix[1]]
+        # Plot source positions
         ax4.scatter(
-            ref_x,
-            ref_y,
-            s=100,
+            x,
+            y,
+            s=30,
             facecolors="none",
-            edgecolors="blue",
+            edgecolors="lime",
             linewidths=1.5,
-            marker="x",
-            label="Catalog",
+            label="Sources",
+            transform=ax4.get_transform("pixel") if image.has_wcs else ax4.transData,
         )
+
+        # Draw apertures if radius provided
+        if aperture_radius is not None:
+            for xi, yi in zip(x, y):
+                circle = Circle(
+                    (xi, yi),
+                    aperture_radius,
+                    fill=False,
+                    edgecolor="cyan",
+                    linewidth=1.5,
+                    alpha=0.8,
+                    transform=ax4.get_transform("pixel")
+                    if image.has_wcs
+                    else ax4.transData,
+                )
+                ax4.add_patch(circle)
+
+            # Add aperture info text in corner
+            aperture_text = f"Aperture: {aperture_radius:.2f} px"
+            ax4.text(
+                0.02,
+                0.98,
+                aperture_text,
+                transform=ax4.transAxes,
+                fontsize=10,
+                verticalalignment="top",
+                bbox=dict(
+                    boxstyle="round", facecolor="black", alpha=0.7, edgecolor="cyan"
+                ),
+                color="cyan",
+                fontweight="bold",
+            )
+
         ax4.legend(loc="upper right")
 
     plt.tight_layout()

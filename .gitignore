@@ -4,6 +4,8 @@
 
 # Results, images, and cache
 soap_images/
+soap_intermediates/
+soap_debug/
 soap_results/
 .soap_cache/
 
@@ -25,4 +27,4 @@ docs/_build/
 .coverage
 
 # Local scratch
-example.py
+*scratch.py
