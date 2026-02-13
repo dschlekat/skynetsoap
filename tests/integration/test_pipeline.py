@@ -433,3 +433,106 @@ class TestLimitingMagnitude:
             for row in normal_result:
                 if not np.isnan(row["calibrated_mag"]):
                     assert row["limiting_mag"] > row["calibrated_mag"]
+
+    def test_limiting_magnitude_default_method_is_analytic(
+        self, mock_fits_image, tmp_path, soap_config
+    ):
+        """Default config should report analytic limiting magnitude as primary."""
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        result = s.run()
+        assert len(result) > 0
+        assert "limiting_mag_analytic" in result.table.colnames
+        assert "limiting_mag_robust" in result.table.colnames
+
+        np.testing.assert_allclose(
+            np.array(result.table["limiting_mag"], dtype=float),
+            np.array(result.table["limiting_mag_analytic"], dtype=float),
+            equal_nan=True,
+        )
+        assert np.all(
+            np.isnan(np.array(result.table["limiting_mag_robust"], dtype=float))
+        )
+
+    def test_limiting_magnitude_robust_method_selection(
+        self, mock_fits_image, tmp_path, soap_config
+    ):
+        """Robust mode should populate robust limit and select it as primary."""
+        soap_config.limiting_mag_method = "robust"
+        soap_config.limiting_mag_robust_n_samples = 250
+        soap_config.limiting_mag_robust_mask_dilate_pixels = 2
+        soap_config.limiting_mag_robust_edge_buffer_pixels = 10
+        soap_config.limiting_mag_robust_sigma_estimator = "mad"
+        soap_config.limiting_mag_robust_max_draws_multiplier = 20
+        soap_config.limiting_mag_robust_random_seed = 11
+
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        result = s.run()
+        assert len(result) > 0
+
+        robust_vals = np.array(result.table["limiting_mag_robust"], dtype=float)
+        assert np.any(np.isfinite(robust_vals))
+        np.testing.assert_allclose(
+            np.array(result.table["limiting_mag"], dtype=float),
+            robust_vals,
+            equal_nan=True,
+        )
+
+        diagnostics = result.table.meta.get("limiting_mag_diagnostics", [])
+        assert len(diagnostics) >= 1
+        assert diagnostics[0]["method"] == "robust"
+
+    def test_limiting_magnitude_robust_uses_pipeline_apertures(
+        self, mock_fits_image, tmp_path, soap_config
+    ):
+        """Robust method should use the pipeline photometry apertures."""
+        soap_config.aperture_mode = "multi"
+        soap_config.aperture_radii = [3.0, 7.0]
+        soap_config.aperture_keep_all = True
+        soap_config.limiting_mag_method = "robust"
+        soap_config.limiting_mag_robust_n_samples = 200
+        soap_config.limiting_mag_robust_mask_dilate_pixels = 2
+        soap_config.limiting_mag_robust_edge_buffer_pixels = 10
+        soap_config.limiting_mag_robust_sigma_estimator = "mad"
+        soap_config.limiting_mag_robust_max_draws_multiplier = 20
+        soap_config.limiting_mag_robust_random_seed = 13
+
+        s = Soap(
+            observation_id=99999,
+            config=soap_config,
+            calibrator=MockCalibrator(zp=25.0, zp_err=0.01),
+            image_dir=str(tmp_path / "images"),
+            result_dir=str(tmp_path / "results"),
+        )
+        shutil.copy(mock_fits_image, s.image_dir / "test_image.fits")
+
+        result = s.run()
+        assert len(result) > 0
+
+        diagnostics = result.table.meta.get("limiting_mag_diagnostics", [])
+        non_forced = [d for d in diagnostics if not d.get("is_forced", False)]
+        assert len(non_forced) >= 2
+
+        diag_radii = sorted(
+            {
+                round(float(d["aperture_radius_pixels"]), 2)
+                for d in non_forced
+                if np.isfinite(d["aperture_radius_pixels"])
+            }
+        )
+        assert diag_radii == [3.0, 7.0]

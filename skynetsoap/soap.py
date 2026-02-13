@@ -14,6 +14,7 @@ from tqdm import tqdm
 from .config.loader import SOAPConfig, load_config
 from .core.image import FITSImage
 from .core.errors import ccd_magnitude_error, compute_limiting_magnitude
+from .core.limiting_mag import compute_robust_limiting_magnitude
 from .core.result import PhotometryResult
 from .extraction.background import estimate_background
 from .extraction.extractor import extract_sources
@@ -33,7 +34,7 @@ from astropy.utils.exceptions import AstropyWarning
 warnings.simplefilter("ignore", category=AstropyWarning)
 
 # TODO: Add clarity for magnitude systems in the results, e.g. by including a "cal_mag_system" column that specifies the system of the calibrated magnitudes (e.g. "AB", "Vega"). Stick with the system used by the input data, but provide a way to convert if needed.
-# TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog.
+# TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog, using dask.
 # TODO: Add more robust handling of edge cases like no sources detected, no calibrators, failed astrometry, etc.
 # TODO: Rename package and core class to skynetphot and SkynetPhot for better clarity and discoverability.
 # TODO: Add differential photometry mode that uses an ensemble of reference stars in the field to correct for systematics and improve precision, especially for time-series data. This mode should only report flux, and any target source extraction should return a normalized flux relative to its median flux across the observation.
@@ -70,8 +71,8 @@ class Soap:
     Photometry Modes
     ----------------
     - **fixed**: Single aperture with user-defined radius
-    - **fwhm_scaled**: Aperture scaled to measured FWHM (default)
-    - **optimal**: Searches for radius that maximizes median SNR
+    - **fwhm_scaled**: Aperture scaled to measured FWHM
+    - **optimal**: Searches for radius that maximizes median SNR across all sources in the observation (default)
     - **multi**: Tests multiple radii for curve-of-growth analysis
 
     By default, all modes return one row per source (best aperture selected).
@@ -86,8 +87,11 @@ class Soap:
     Limiting Magnitude
     ------------------
     Automatically calculated for all measurements (normal and forced) based on
-    5-sigma detection threshold using background RMS and aperture size.
-    Stored in `limiting_mag` column.
+    5-sigma detection threshold. Default method is analytic (background RMS +
+    aperture size). Optional robust blank-sky aperture sampling is configurable
+    via ``limiting_mag.method = "robust"``.
+    Stored in `limiting_mag` column, with diagnostics in metadata and per-row
+    `limiting_mag_analytic` / `limiting_mag_robust` columns.
 
     Methods
     -------
@@ -395,19 +399,40 @@ class Soap:
             image, ins_mag_cal, ins_mag_err_cal, world_coords_cal, image.filter_name
         )
         n_cal = int(np.sum(match_mask)) if match_mask is not None else 0
+
+        limiting_method = self.config.limiting_mag_method.lower().strip()
+        if limiting_method not in {"analytic", "robust"}:
+            self.logger.warning(
+                "Unknown limiting_mag.method=%r; falling back to analytic.",
+                self.config.limiting_mag_method,
+            )
+            limiting_method = "analytic"
+
         cal_limiting_mag = compute_limiting_magnitude(
             zp, bkg_result.global_rms, calib_aperture_r, n_sigma=5.0
         )
+        robust_extra_mask = None
+        if limiting_method == "robust":
+            robust_extra_mask = ~np.isfinite(image.data)
+            sat_level = image.header.get("SATURATE")
+            if sat_level is not None:
+                robust_extra_mask = robust_extra_mask | (image.data >= float(sat_level))
+
         aliases = self.config.filters.get("aliases", {})
         canonical_filter = aliases.get(image.filter_name, image.filter_name)
         self.logger.info(
-            "ZP = %.3f +/- %.3f from %d stars (filter %s), limiting mag = %.3f",
+            "ZP = %.3f +/- %.3f from %d stars (filter %s), limiting mag (analytic) = %.3f",
             zp,
             zp_err,
             n_cal,
             canonical_filter,
             cal_limiting_mag,
         )
+        if limiting_method == "robust":
+            self.logger.info(
+                "Using robust limiting magnitude for %s with pipeline-selected apertures.",
+                img_path.name,
+            )
 
         # Multi-aperture photometry loop
         for aperture_id, aperture_r in enumerate(aperture_radii):
@@ -464,9 +489,77 @@ class Soap:
             snr = flux_valid / flux_err_valid
 
             # Limiting magnitude
-            limiting_mag = compute_limiting_magnitude(
+            limiting_mag_analytic = compute_limiting_magnitude(
                 zp, bkg_result.global_rms, aperture_r, n_sigma=5.0
             )
+            limiting_mag_robust = np.nan
+            if limiting_method == "robust":
+                robust_result = compute_robust_limiting_magnitude(
+                    data_sub=data_sub,
+                    zeropoint=zp,
+                    aperture_radius_pixels=aperture_r,
+                    err=bkg_result.global_rms,
+                    extraction_threshold=self.config.extraction_threshold,
+                    extraction_min_area=self.config.extraction_min_area,
+                    n_samples=self.config.limiting_mag_robust_n_samples,
+                    mask_dilate_pixels=self.config.limiting_mag_robust_mask_dilate_pixels,
+                    edge_buffer_pixels=self.config.limiting_mag_robust_edge_buffer_pixels,
+                    sigma_estimator=self.config.limiting_mag_robust_sigma_estimator,
+                    max_draws_multiplier=self.config.limiting_mag_robust_max_draws_multiplier,
+                    random_seed=self.config.limiting_mag_robust_random_seed,
+                    extra_mask=robust_extra_mask,
+                )
+                limiting_mag_robust = robust_result.limiting_mag
+                for warning_text in robust_result.warnings:
+                    self.logger.warning(
+                        "%s (%s, aperture_id=%d)",
+                        warning_text,
+                        img_path.name,
+                        aperture_id,
+                    )
+
+                self._record_limiting_mag_diagnostic(
+                    result,
+                    {
+                        "image_file": img_path.name,
+                        "aperture_id": aperture_id,
+                        "is_forced": False,
+                        "method": "robust",
+                        "n_samples_requested": robust_result.n_samples_requested,
+                        "n_samples_used": robust_result.n_samples_used,
+                        "aperture_radius_pixels": robust_result.aperture_radius_pixels,
+                        "sigma_ap": robust_result.sigma_ap,
+                        "f5": robust_result.flux_limit,
+                        "fraction_masked": robust_result.fraction_masked,
+                        "warnings": robust_result.warnings,
+                    },
+                )
+
+                self.logger.info(
+                    "Robust limiting mag (%s, aperture_id=%d): m5=%.3f, sigma_ap=%.3f, "
+                    "f5=%.3f, n=%d/%d, r=%.2f px, masked=%.1f%%",
+                    img_path.name,
+                    aperture_id,
+                    robust_result.limiting_mag,
+                    robust_result.sigma_ap,
+                    robust_result.flux_limit,
+                    robust_result.n_samples_used,
+                    robust_result.n_samples_requested,
+                    robust_result.aperture_radius_pixels,
+                    100.0 * robust_result.fraction_masked,
+                )
+                if np.isfinite(limiting_mag_robust):
+                    limiting_mag = limiting_mag_robust
+                else:
+                    limiting_mag = limiting_mag_analytic
+                    self.logger.warning(
+                        "Robust limiting magnitude failed for %s (aperture_id=%d); "
+                        "using analytic value.",
+                        img_path.name,
+                        aperture_id,
+                    )
+            else:
+                limiting_mag = limiting_mag_analytic
 
             # Append all sources to result
             for i in range(len(flux_valid)):
@@ -494,6 +587,8 @@ class Soap:
                     aperture_radius=aperture_r,
                     fwhm=ext_result.fwhm,
                     n_cal_stars=n_cal,
+                    limiting_mag_analytic=limiting_mag_analytic,
+                    limiting_mag_robust=limiting_mag_robust,
                     limiting_mag=limiting_mag,
                     is_forced=False,
                     flag=int(flag_valid[i]),
@@ -530,9 +625,69 @@ class Soap:
             )
 
             # Calculate limiting magnitude for forced photometry
-            limiting_mag_forced = compute_limiting_magnitude(
+            limiting_mag_forced_analytic = compute_limiting_magnitude(
                 zp, bkg_result.global_rms, forced_aperture_r, n_sigma=5.0
             )
+            limiting_mag_forced_robust = np.nan
+            if limiting_method == "robust":
+                robust_forced = compute_robust_limiting_magnitude(
+                    data_sub=data_sub,
+                    zeropoint=zp,
+                    aperture_radius_pixels=forced_aperture_r,
+                    err=bkg_result.global_rms,
+                    extraction_threshold=self.config.extraction_threshold,
+                    extraction_min_area=self.config.extraction_min_area,
+                    n_samples=self.config.limiting_mag_robust_n_samples,
+                    mask_dilate_pixels=self.config.limiting_mag_robust_mask_dilate_pixels,
+                    edge_buffer_pixels=self.config.limiting_mag_robust_edge_buffer_pixels,
+                    sigma_estimator=self.config.limiting_mag_robust_sigma_estimator,
+                    max_draws_multiplier=self.config.limiting_mag_robust_max_draws_multiplier,
+                    random_seed=self.config.limiting_mag_robust_random_seed,
+                    extra_mask=robust_extra_mask,
+                )
+                limiting_mag_forced_robust = robust_forced.limiting_mag
+                for warning_text in robust_forced.warnings:
+                    self.logger.warning(
+                        "%s (%s, forced_photometry)", warning_text, img_path.name
+                    )
+                self._record_limiting_mag_diagnostic(
+                    result,
+                    {
+                        "image_file": img_path.name,
+                        "aperture_id": 0,
+                        "is_forced": True,
+                        "method": "robust",
+                        "n_samples_requested": robust_forced.n_samples_requested,
+                        "n_samples_used": robust_forced.n_samples_used,
+                        "aperture_radius_pixels": robust_forced.aperture_radius_pixels,
+                        "sigma_ap": robust_forced.sigma_ap,
+                        "f5": robust_forced.flux_limit,
+                        "fraction_masked": robust_forced.fraction_masked,
+                        "warnings": robust_forced.warnings,
+                    },
+                )
+                self.logger.info(
+                    "Robust limiting mag (%s, forced): m5=%.3f, sigma_ap=%.3f, "
+                    "f5=%.3f, n=%d/%d, r=%.2f px, masked=%.1f%%",
+                    img_path.name,
+                    robust_forced.limiting_mag,
+                    robust_forced.sigma_ap,
+                    robust_forced.flux_limit,
+                    robust_forced.n_samples_used,
+                    robust_forced.n_samples_requested,
+                    robust_forced.aperture_radius_pixels,
+                    100.0 * robust_forced.fraction_masked,
+                )
+                if np.isfinite(limiting_mag_forced_robust):
+                    limiting_mag_forced = limiting_mag_forced_robust
+                else:
+                    limiting_mag_forced = limiting_mag_forced_analytic
+                    self.logger.warning(
+                        "Robust limiting magnitude failed for %s (forced); using analytic value.",
+                        img_path.name,
+                    )
+            else:
+                limiting_mag_forced = limiting_mag_forced_analytic
 
             # Process each forced position
             for i in range(len(forced_positions)):
@@ -598,6 +753,8 @@ class Soap:
                     aperture_radius=forced_aperture_r,
                     fwhm=ext_result.fwhm,
                     n_cal_stars=n_cal,
+                    limiting_mag_analytic=limiting_mag_forced_analytic,
+                    limiting_mag_robust=limiting_mag_forced_robust,
                     limiting_mag=limiting_mag_forced,
                     is_forced=True,
                     flag=int(flag_forced[i]),
@@ -651,6 +808,13 @@ class Soap:
                 matched_mask=match_mask,
                 save_path=debug_path,
             )
+
+    def _record_limiting_mag_diagnostic(
+        self, result: PhotometryResult, diagnostic: dict[str, object]
+    ) -> None:
+        """Append limiting-magnitude diagnostics to table metadata."""
+        diagnostics = result.table.meta.setdefault("limiting_mag_diagnostics", [])
+        diagnostics.append(diagnostic)
 
     def _get_aperture_radii(
         self,

@@ -235,9 +235,33 @@ cfg = load_config(overrides={"aperture": {"mode": "optimal"}, "calibration": {"s
 s = Soap(observation_id=12345, config=cfg)
 ```
 
+Enable robust blank-sky limiting-magnitude sampling (optional):
+
+```python
+cfg = load_config(
+    overrides={
+        "limiting_mag": {
+            "method": "robust",
+            "robust": {
+                "n_samples": 2000,
+                "mask_dilate_pixels": 3,
+                "edge_buffer_pixels": 25,
+                "sigma_estimator": "mad",
+                "max_draws_multiplier": 20,
+                # random_seed > 0 for deterministic sampling, <= 0 for random
+                "random_seed": 123,
+            },
+        }
+    }
+)
+```
+
+In robust mode, the limiting-magnitude aperture radius is taken from the
+pipeline photometry aperture for each measurement.
+
 ## Package Structure
 
-``` bash
+``` text
 skynetsoap/
 ├── soap.py              # Pipeline orchestrator
 ├── config/              # TOML configuration + loader

@@ -40,6 +40,8 @@ _COLUMNS = {
     "aperture_radius": (float, None),
     "fwhm": (float, None),
     "n_cal_stars": (int, None),
+    "limiting_mag_analytic": (float, u.mag),
+    "limiting_mag_robust": (float, u.mag),
     "limiting_mag": (float, u.mag),
     "is_forced": (bool, None),
     "flag": (int, None),

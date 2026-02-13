@@ -26,6 +26,17 @@ enabled = false                            # Whether to perform forced photometr
 snr_threshold = 5.0                        # Minimum SNR for forced photometry measurements
 aperture_radius = 5.0                      # Fixed aperture radius in pixels for forced photometry
 
+[limiting_mag]
+method = "analytic"                        # "analytic" (default) or "robust" blank-sky aperture sampling
+
+[limiting_mag.robust]
+n_samples = 2000                           # Number of blank-sky apertures to sample
+mask_dilate_pixels = 5                     # Dilate source/bad-pixel mask by this many pixels
+edge_buffer_pixels = 25                    # Exclude this many edge pixels from sampling
+sigma_estimator = "mad"                    # "mad" (robust) or "std"
+max_draws_multiplier = 20                  # Max random draws = multiplier * n_samples
+random_seed = 0                            # Set <= 0 for nondeterministic behavior
+
 [astrometry]
 enabled = false                            # Whether to attempt astrometric solving
 timeout = 500                              # Timeout in seconds for astrometry.net solver

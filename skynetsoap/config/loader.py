@@ -58,6 +58,15 @@ class SOAPConfig:
     forced_photometry_snr_threshold: float = 3.0
     forced_photometry_aperture_radius: float = 5.0
 
+    # Limiting magnitude
+    limiting_mag_method: str = "analytic"
+    limiting_mag_robust_n_samples: int = 2000
+    limiting_mag_robust_mask_dilate_pixels: int = 3
+    limiting_mag_robust_edge_buffer_pixels: int = 25
+    limiting_mag_robust_sigma_estimator: str = "mad"
+    limiting_mag_robust_max_draws_multiplier: int = 20
+    limiting_mag_robust_random_seed: int | None = None
+
     # Astrometry
     astrometry_enabled: bool = False
     astrometry_timeout: int = 120
@@ -114,6 +123,29 @@ class SOAPConfig:
         )
         cfg.forced_photometry_aperture_radius = fp.get(
             "aperture_radius", cfg.forced_photometry_aperture_radius
+        )
+
+        lm = d.get("limiting_mag", {})
+        cfg.limiting_mag_method = lm.get("method", cfg.limiting_mag_method)
+        lm_robust = lm.get("robust", {})
+        cfg.limiting_mag_robust_n_samples = lm_robust.get(
+            "n_samples", cfg.limiting_mag_robust_n_samples
+        )
+        cfg.limiting_mag_robust_mask_dilate_pixels = lm_robust.get(
+            "mask_dilate_pixels", cfg.limiting_mag_robust_mask_dilate_pixels
+        )
+        cfg.limiting_mag_robust_edge_buffer_pixels = lm_robust.get(
+            "edge_buffer_pixels", cfg.limiting_mag_robust_edge_buffer_pixels
+        )
+        cfg.limiting_mag_robust_sigma_estimator = lm_robust.get(
+            "sigma_estimator", cfg.limiting_mag_robust_sigma_estimator
+        )
+        cfg.limiting_mag_robust_max_draws_multiplier = lm_robust.get(
+            "max_draws_multiplier", cfg.limiting_mag_robust_max_draws_multiplier
+        )
+        seed = lm_robust.get("random_seed", cfg.limiting_mag_robust_random_seed)
+        cfg.limiting_mag_robust_random_seed = (
+            int(seed) if seed is not None and int(seed) > 0 else None
         )
 
         ast = d.get("astrometry", {})

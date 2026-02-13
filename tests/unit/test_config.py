@@ -13,6 +13,9 @@ class TestLoadConfig:
         assert default_config.extraction_min_area == 5
         assert default_config.aperture_mode == "optimal"
         assert default_config.calibration_sigma_clip == 3.0
+        assert default_config.limiting_mag_method == "analytic"
+        assert default_config.limiting_mag_robust_n_samples == 2000
+        assert default_config.limiting_mag_robust_random_seed is None
 
     def test_config_from_dict(self):
         """Verify SOAPConfig.from_dict with custom values."""
