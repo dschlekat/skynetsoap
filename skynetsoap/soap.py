@@ -22,7 +22,7 @@ from .extraction.aperture import (
 )
 from .calibration.default_calibrator import DefaultCalibrator
 from .io.skynet_api import SkynetAPI
-from .io.plotter import plot_lightcurve
+from .io.plotter import plot_lightcurve, create_debug_plot
 from .utils.logging import setup_logging
 
 import warnings
@@ -353,6 +353,54 @@ class Soap:
 
         snr = flux / flux_err
 
+        # Save intermediate products if enabled
+        if self.config.save_intermediates:
+            self._save_intermediates(
+                img_path,
+                image,
+                bkg_result,
+                data_sub,
+                ext_result,
+                x,
+                y,
+                world_coords,
+                flux,
+                ins_mag,
+                zp,
+            )
+
+        # Generate debug plot if enabled
+        if self.config.debug_mode:
+            debug_dir = Path(self.config.debug_dir) / str(self.observation_id)
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_path = debug_dir / f"{img_path.stem}_debug.png"
+
+            # Prepare data for debug plot
+            source_coords = np.column_stack([x, y])
+            if (
+                hasattr(self.calibrator, "_cached_ref")
+                and self.calibrator._cached_ref is not None
+            ):
+                import astropy.units as u
+
+                ref = self.calibrator._cached_ref
+                ref_coords = SkyCoord(
+                    ra=ref["RAJ2000"].to_numpy() * u.deg,
+                    dec=ref["DEJ2000"].to_numpy() * u.deg,
+                )
+            else:
+                ref_coords = None
+
+            create_debug_plot(
+                image=image,
+                bkg_result=bkg_result,
+                source_coords=source_coords,
+                aperture_radius=aperture_r,
+                ref_coords=ref_coords,
+                matched_mask=match_mask,
+                save_path=debug_path,
+            )
+
         # Append all sources to result
         for i in range(len(flux)):
             result.add_measurement(
@@ -414,6 +462,62 @@ class Soap:
             min_r=self.config.aperture_min_radius,
             max_r=self.config.aperture_max_radius,
         )
+
+    def _save_intermediates(
+        self,
+        img_path: Path,
+        image: FITSImage,
+        bkg_result,
+        data_sub: np.ndarray,
+        ext_result,
+        x: np.ndarray,
+        y: np.ndarray,
+        world_coords: SkyCoord,
+        flux: np.ndarray,
+        ins_mag: np.ndarray,
+        zp: float,
+    ) -> None:
+        """Save intermediate products to disk."""
+        from astropy.io import fits
+        from astropy.table import Table
+
+        inter_dir = Path(self.config.intermediates_dir) / str(self.observation_id)
+        inter_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save background-subtracted FITS
+        bgsub_path = inter_dir / f"{img_path.stem}_bgsub.fits"
+        hdu = fits.PrimaryHDU(data=data_sub, header=image.header)
+        hdu.header["BKGMEAN"] = (bkg_result.global_back, "Background mean (counts)")
+        hdu.header["BKGRMS"] = (bkg_result.global_rms, "Background RMS (counts)")
+        hdu.writeto(bgsub_path, overwrite=True)
+
+        # Save source catalog
+        catalog_path = inter_dir / f"{img_path.stem}_sources.ecsv"
+        catalog = Table()
+        catalog["x_pix"] = x
+        catalog["y_pix"] = y
+        if world_coords is not None:
+            catalog["ra"] = world_coords.ra.deg
+            catalog["dec"] = world_coords.dec.deg
+        catalog["flux"] = flux
+        catalog["ins_mag"] = ins_mag
+        catalog["fwhm"] = ext_result.fwhm
+        catalog.write(catalog_path, format="ascii.ecsv", overwrite=True)
+
+        # Save calibrated FITS (if zeropoint available)
+        if not np.isnan(zp):
+            cal_path = inter_dir / f"{img_path.stem}_cal.fits"
+            hdu_cal = fits.PrimaryHDU(data=data_sub, header=image.header)
+            hdu_cal.header["ZP"] = (zp, "Photometric zeropoint (mag)")
+            hdu_cal.header["BKGMEAN"] = (
+                bkg_result.global_back,
+                "Background mean (counts)",
+            )
+            hdu_cal.header["BKGRMS"] = (
+                bkg_result.global_rms,
+                "Background RMS (counts)",
+            )
+            hdu_cal.writeto(cal_path, overwrite=True)
 
     # ------------------------------------------------------------------
     # Post-processing
@@ -628,3 +732,122 @@ class Soap:
             shutil.rmtree(res_path)
 
         return {"images_deleted": images_deleted, "results_deleted": results_deleted}
+
+    # ------------------------------------------------------------------
+    # Debugging utilities
+    # ------------------------------------------------------------------
+    def debug_image(
+        self,
+        image_path: str | Path,
+        save_path: str | Path | None = None,
+        show: bool = False,
+    ):
+        """Create debugging visualization for a single image.
+
+        Generates a 4-panel plot showing:
+        1. Original image
+        2. Background map
+        3. Background-subtracted image with extracted sources and apertures
+        4. Matched vs unmatched calibration stars
+
+        Parameters
+        ----------
+        image_path : str or Path
+            Path to a FITS image file.
+        save_path : str or Path, optional
+            If provided, save the plot to this path.
+            If None and debug_mode is enabled, saves to debug_dir.
+        show : bool
+            If True, display the plot interactively.
+
+        Returns
+        -------
+        Figure
+            The matplotlib figure object.
+        """
+        import matplotlib.pyplot as plt
+        import astropy.units as u
+
+        img_path = Path(image_path)
+        image = FITSImage.load(img_path)
+
+        if not image.has_wcs:
+            self.logger.warning(
+                "Image %s has no WCS, debug plot may be limited.", img_path.name
+            )
+
+        # Background subtraction
+        bkg_result = estimate_background(image.data)
+        data_sub = image.data - bkg_result.background
+
+        # Source extraction
+        ext_result = extract_sources(
+            data_sub,
+            err=bkg_result.global_rms,
+            threshold=self.config.extraction_threshold,
+            min_area=self.config.extraction_min_area,
+        )
+
+        if ext_result.n_sources == 0:
+            self.logger.warning("No sources extracted from %s", img_path.name)
+            source_coords = None
+            aperture_r = None
+            ref_coords = None
+            match_mask = None
+        else:
+            objects = ext_result.objects
+            aperture_r = self._select_aperture(
+                data_sub, objects, bkg_result.global_rms, image.gain, ext_result.fwhm
+            )
+
+            # Get source coordinates
+            x = objects["x"]
+            y = objects["y"]
+            source_coords = np.column_stack([x, y])
+
+            # Convert to sky coordinates if WCS available
+            if image.has_wcs:
+                world_coords = image.wcs.pixel_to_world(x, y)
+                if not hasattr(world_coords, "__len__"):
+                    world_coords = SkyCoord([world_coords])
+
+                # Get reference catalog if available
+                if (
+                    hasattr(self.calibrator, "_cached_ref")
+                    and self.calibrator._cached_ref is not None
+                ):
+                    ref = self.calibrator._cached_ref
+                    ref_coords = SkyCoord(
+                        ra=ref["RAJ2000"].to_numpy() * u.deg,
+                        dec=ref["DEJ2000"].to_numpy() * u.deg,
+                    )
+                    idx, d2d, _ = world_coords.match_to_catalog_sky(ref_coords)
+                    match_mask = d2d.arcsec < self.calibrator.match_radius_arcsec
+                else:
+                    ref_coords = None
+                    match_mask = None
+            else:
+                ref_coords = None
+                match_mask = None
+
+        # Determine save path
+        if save_path is None and self.config.debug_mode:
+            debug_dir = Path(self.config.debug_dir) / str(self.observation_id)
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            save_path = debug_dir / f"{img_path.stem}_debug.png"
+
+        # Create the plot
+        fig = create_debug_plot(
+            image=image,
+            bkg_result=bkg_result,
+            source_coords=source_coords,
+            aperture_radius=aperture_r,
+            ref_coords=ref_coords,
+            matched_mask=match_mask,
+            save_path=save_path,
+        )
+
+        if show:
+            plt.show()
+
+        return fig

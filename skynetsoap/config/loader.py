@@ -57,6 +57,12 @@ class SOAPConfig:
     astrometry_enabled: bool = False
     astrometry_timeout: int = 120
 
+    # Debugging & Intermediate Products
+    debug_mode: bool = False
+    debug_dir: str = "soap_debug"
+    save_intermediates: bool = False
+    intermediates_dir: str = "soap_intermediates"
+
     # Logging
     log_level: str = "WARNING"
 
@@ -84,17 +90,31 @@ class SOAPConfig:
         cal = d.get("calibration", {})
         cfg.calibration_sigma_clip = cal.get("sigma_clip", cfg.calibration_sigma_clip)
         cfg.calibration_max_iter = cal.get("max_iter", cfg.calibration_max_iter)
-        cfg.calibration_match_radius_arcsec = cal.get("match_radius_arcsec", cfg.calibration_match_radius_arcsec)
-        cfg.calibration_default_cat_error = cal.get("default_cat_error", cfg.calibration_default_cat_error)
-        cfg.calibration_merge_tolerance_arcsec = cal.get("merge_tolerance_arcsec", cfg.calibration_merge_tolerance_arcsec)
+        cfg.calibration_match_radius_arcsec = cal.get(
+            "match_radius_arcsec", cfg.calibration_match_radius_arcsec
+        )
+        cfg.calibration_default_cat_error = cal.get(
+            "default_cat_error", cfg.calibration_default_cat_error
+        )
+        cfg.calibration_merge_tolerance_arcsec = cal.get(
+            "merge_tolerance_arcsec", cfg.calibration_merge_tolerance_arcsec
+        )
 
         fp = d.get("forced_photometry", {})
         cfg.forced_photometry_enabled = fp.get("enabled", cfg.forced_photometry_enabled)
-        cfg.forced_photometry_snr_threshold = fp.get("snr_threshold", cfg.forced_photometry_snr_threshold)
+        cfg.forced_photometry_snr_threshold = fp.get(
+            "snr_threshold", cfg.forced_photometry_snr_threshold
+        )
 
         ast = d.get("astrometry", {})
         cfg.astrometry_enabled = ast.get("enabled", cfg.astrometry_enabled)
         cfg.astrometry_timeout = ast.get("timeout", cfg.astrometry_timeout)
+
+        dbg = d.get("debug", {})
+        cfg.debug_mode = dbg.get("enabled", cfg.debug_mode)
+        cfg.debug_dir = dbg.get("debug_dir", cfg.debug_dir)
+        cfg.save_intermediates = dbg.get("save_intermediates", cfg.save_intermediates)
+        cfg.intermediates_dir = dbg.get("intermediates_dir", cfg.intermediates_dir)
 
         log = d.get("logging", {})
         cfg.log_level = log.get("level", cfg.log_level)
@@ -105,7 +125,9 @@ class SOAPConfig:
         return cfg
 
 
-def load_config(user_config_path: str | Path | None = None, overrides: dict[str, Any] | None = None) -> SOAPConfig:
+def load_config(
+    user_config_path: str | Path | None = None, overrides: dict[str, Any] | None = None
+) -> SOAPConfig:
     """Load default config, merge with user config and overrides.
 
     Parameters
