@@ -20,3 +20,6 @@ docs/_build/
 # Environments
 .venv
 .temp
+
+# Git
+.coverage
