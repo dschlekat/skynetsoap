@@ -5,7 +5,7 @@ threshold = 1.5                            # Detection threshold in sigma above 
 min_area = 5                               # Minimum number of connected pixels for a detection
 
 [aperture]
-mode = "fwhm_scaled"                       # "fwhm_scaled", "optimal", "fixed", or "multi"
+mode = "optimal"                           # "fwhm_scaled", "optimal", "fixed", or "multi"
 scale = 2.5                                # Multiplier for FWHM-scaled aperture
 fixed_radius = 5.0                         # Radius in pixels for fixed mode
 min_radius = 2.0                           # Minimum aperture radius in pixels

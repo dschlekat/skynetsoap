@@ -19,12 +19,46 @@
 
 ## Installation
 
-Requires Python 3.12+.
+Requires:
+
+- Python 3.12+
+- Installation of the [`skynetapi`](https://github.com/astrodyl/skynetapi) Python package
+- A Skynet API token
+
+Clone the repository:
 
 ```bash
 git clone https://github.com/dschlekat/soap.git
 cd soap
+```
+
+### Option 1: uv (recommended)
+
+Install `uv`:
+
+- Official install guide: <https://docs.astral.sh/uv/getting-started/installation/>
+- GitHub releases: <https://github.com/astral-sh/uv/releases>
+
+Install project dependencies:
+
+```bash
 uv sync
+```
+
+### Option 2: native Python venv + pip
+
+Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Install the package and dependencies:
+
+```bash
+python -m pip install --upgrade pip
+pip install -e .
 ```
 
 Set your Skynet API token:
@@ -34,6 +68,23 @@ export SKYNET_API_TOKEN="your-token-here"
 ```
 
 ## Usage
+
+### Quick start
+
+```python
+from astropy.coordinates import SkyCoord
+from skynetsoap import Soap
+
+s = Soap(observation_id=11920699, verbose=True)
+s.download(after="2025-01-12")
+result = s.run()
+result.to_csv("all_sources.csv")
+
+target = SkyCoord("12:49:37.598", "-63:32:09.8", unit=("hourangle", "deg"))
+forced = s.run(forced_positions=[target])
+target_result = forced.extract_target(target, forced_photometry=True)
+target_result.to_csv("target_forced.csv")
+```
 
 ### Field-wide photometry
 
@@ -156,7 +207,7 @@ s = Soap(observation_id=12345, config=cfg)
 
 ## Package Structure
 
-```
+``` bash
 skynetsoap/
 ├── soap.py              # Pipeline orchestrator
 ├── config/              # TOML configuration + loader

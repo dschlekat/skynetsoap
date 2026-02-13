@@ -31,16 +31,11 @@ from astropy.utils.exceptions import AstropyWarning
 warnings.simplefilter("ignore", category=AstropyWarning)
 
 # TODO: Add clarity for magnitude systems in the results, e.g. by including a "cal_mag_system" column that specifies the system of the calibrated magnitudes (e.g. "AB", "Vega"). Stick with the system used by the input data, but provide a way to convert if needed.
-# TODO: Add debugging method to inspect individual images with plotting of sources, apertures, etc.
 # TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog.
 # TODO: Add util methods to clean up downloaded images and results for a given observation ID, or to manage disk usage across multiple runs.
-# TODO: Add options to save intermediate products like calibrated images, source catalogs, etc.
-# TODO: Add forced photometry mode for known or theorized transient target positions.
 # TODO: Add more robust handling of edge cases like no sources detected, no calibrators, failed astrometry, etc.
-# TODO: Add support for multi-aperture photometry and curve-of-growth analysis, as well as debugging modes, for better aperture selection.
-# TODO: Add an optional limiting magnitude calculation based on background noise and aperture size for non-detections.
-# TODO: Add example usage within the class docstring and in the README.
 # TODO: Rename package and core class to skynetphot and SkynetPhot for better clarity and discoverability.
+# TODO: Add differential photometry mode that uses an ensemble of reference stars in the field to correct for systematics and improve precision, especially for time-series data. This mode should only report flux, and any target source extraction should return a normalized flux relative to its median flux across the observation.
 
 
 class Soap:
@@ -108,6 +103,24 @@ class Soap:
         Get information about cached files for this observation.
     clear_cache(images=True, results=True, confirm=True)
         Clear cached files for this observation.
+
+    Examples
+    --------
+    Basic field-wide run:
+
+    >>> from skynetsoap import Soap
+    >>> s = Soap(observation_id=11920699, verbose=True)
+    >>> s.download(after="2025-01-12")
+    >>> result = s.run()
+    >>> result.to_csv("all_sources.csv")
+
+    Forced photometry at a target position:
+
+    >>> from astropy.coordinates import SkyCoord
+    >>> target = SkyCoord("12:49:37.598", "-63:32:09.8", unit=("hourangle", "deg"))
+    >>> forced = s.run(forced_positions=[target])
+    >>> target_result = forced.extract_target(target, forced_photometry=True)
+    >>> target_result.to_csv("target_forced.csv")
     """
 
     def __init__(
