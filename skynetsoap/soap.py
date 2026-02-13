@@ -43,12 +43,6 @@ from astropy.utils.exceptions import AstropyWarning
 
 warnings.simplefilter("ignore", category=AstropyWarning)
 
-# TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog, using dask.
-# TODO: Add more robust handling of edge cases like no sources detected, no calibrators, failed astrometry, etc.
-# TODO: Rename package and core class to skynetphot and SkynetPhot for better clarity and discoverability.
-# TODO: Review repo's code organization, moving methods from soap.py to different modules as needed to keep the core class focused on orchestration and high-level logic, while utility functions and specific steps are implemented in separate files for better maintainability.
-# TODO: Add astrometry support with astrometry.net
-
 
 class Soap:
     """Field-wide photometry pipeline runner.
