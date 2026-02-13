@@ -15,6 +15,7 @@ dependencies = [
     "matplotlib>=3.9",
     "numpy>=2.0",
     "pandas>=2.0",
+    "polars>=1.0",
     "pyarrow>=15.0",
     "scipy>=1.14",
     "sep>=1.2",
@@ -44,6 +45,11 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["skynetsoap"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/tests",
+]
 
 [dependency-groups]
 dev = [

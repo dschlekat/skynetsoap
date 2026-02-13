@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 
@@ -35,7 +35,7 @@ class DefaultCalibrator:
             default_error=config.calibration_default_cat_error,
             merge_tolerance_arcsec=config.calibration_merge_tolerance_arcsec,
         )
-        self._cached_ref: pd.DataFrame | None = None
+        self._cached_ref: pl.DataFrame | None = None
         self._cached_center: SkyCoord | None = None
 
     def get_reference_catalog(
@@ -43,7 +43,7 @@ class DefaultCalibrator:
         center: SkyCoord,
         radius_arcmin: float = 10.0,
         filter_band: str = "V",
-    ) -> pd.DataFrame:
+    ) -> pl.DataFrame:
         """Query and return the reference catalog for a field."""
         canonical_band = self._canonicalize_filter_band(filter_band)
         self._cached_ref = self.ref_catalog.query(center, radius_arcmin, canonical_band)
@@ -93,8 +93,8 @@ class DefaultCalibrator:
 
         # Build reference coordinates
         ref_coords = SkyCoord(
-            ra=ref["RAJ2000"].values * u.deg,
-            dec=ref["DEJ2000"].values * u.deg,
+            ra=ref["RAJ2000"].to_numpy() * u.deg,
+            dec=ref["DEJ2000"].to_numpy() * u.deg,
         )
 
         # Match extracted sources to catalog
@@ -107,14 +107,16 @@ class DefaultCalibrator:
             )
             return np.nan, np.nan, match_mask
 
-        matched_refs = ref.iloc[idx[match_mask]].reset_index(drop=True)
+        # Select matched reference stars using polars row selection
+        matched_indices = idx[match_mask].tolist()
+        matched_refs = ref[matched_indices]
         matched_ins_mags = ins_mags[match_mask]
         matched_ins_mag_errs = ins_mag_errs[match_mask]
 
         # Get catalog magnitudes and errors
-        cat_mags = matched_refs[mag_col].values
+        cat_mags = matched_refs[mag_col].to_numpy()
         if err_col in matched_refs.columns:
-            cat_errs = matched_refs[err_col].values
+            cat_errs = matched_refs[err_col].to_numpy()
             cat_errs = np.where(np.isnan(cat_errs), self.default_cat_error, cat_errs)
         else:
             cat_errs = np.full(len(cat_mags), self.default_cat_error)
