@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import glob
-import os
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +24,13 @@ from .extraction.aperture import (
 from .calibration.default_calibrator import DefaultCalibrator
 from .io.skynet_api import SkynetAPI
 from .io.plotter import plot_lightcurve, create_debug_plot
+from .io.cache_admin import (
+    get_cache_info,
+    clear_observation_cache,
+    dir_stats as cache_dir_stats,
+    prune_cache as prune_cache_admin,
+    cleanup_observation as cleanup_observation_admin,
+)
 from .utils.logging import setup_logging
 
 import warnings
@@ -400,23 +405,12 @@ class Soap:
         )
         n_cal = int(np.sum(match_mask)) if match_mask is not None else 0
 
-        limiting_method = self.config.limiting_mag_method.lower().strip()
-        if limiting_method not in {"analytic", "robust"}:
-            self.logger.warning(
-                "Unknown limiting_mag.method=%r; falling back to analytic.",
-                self.config.limiting_mag_method,
-            )
-            limiting_method = "analytic"
+        limiting_method = self._resolve_limiting_method()
 
         cal_limiting_mag = compute_limiting_magnitude(
             zp, bkg_result.global_rms, calib_aperture_r, n_sigma=5.0
         )
-        robust_extra_mask = None
-        if limiting_method == "robust":
-            robust_extra_mask = ~np.isfinite(image.data)
-            sat_level = image.header.get("SATURATE")
-            if sat_level is not None:
-                robust_extra_mask = robust_extra_mask | (image.data >= float(sat_level))
+        robust_extra_mask = self._build_robust_extra_mask(image, limiting_method)
 
         aliases = self.config.filters.get("aliases", {})
         canonical_filter = aliases.get(image.filter_name, image.filter_name)
@@ -457,162 +451,74 @@ class Soap:
             x = objects["x"][valid]
             y = objects["y"][valid]
 
-            # Instrumental magnitudes
-            ins_mag = -2.5 * np.log10(flux_valid)
-            ins_mag_err = 1.0857 * (flux_err_valid / flux_valid)
-
             # Convert to sky coordinates
             world_coords = image.wcs.pixel_to_world(x, y)
             if not hasattr(world_coords, "__len__"):
                 world_coords = SkyCoord([world_coords])
 
-            # Calibrated magnitudes
-            if np.isnan(zp):
-                cal_mag = np.full_like(ins_mag, np.nan)
-                cal_mag_err = np.full_like(ins_mag_err, np.nan)
-            else:
-                cal_mag = ins_mag + zp
-                n_pix = np.pi * aperture_r**2
-                n_bkgpix = np.pi * (3 * aperture_r) ** 2
-                cal_mag_err = ccd_magnitude_error(
+            ins_mag, ins_mag_err, snr, cal_mag, cal_mag_err = (
+                self._compute_photometry_quantities(
                     flux=flux_valid,
+                    flux_err=flux_err_valid,
+                    zp=zp,
+                    zp_err=zp_err,
+                    aperture_r=aperture_r,
+                    bkg_global_back=bkg_result.global_back,
+                    bkg_global_rms=bkg_result.global_rms,
                     gain=image.gain,
-                    n_pix=n_pix,
-                    background=bkg_result.global_back,
                     rdnoise=image.rdnoise,
-                    n_bkgpix=n_bkgpix,
-                    sigma_bkg=bkg_result.global_rms,
-                    sigma_zp=zp_err,
                 )
-                cal_mag_err = np.atleast_1d(cal_mag_err)
-
-            snr = flux_valid / flux_err_valid
-
-            # Limiting magnitude
-            limiting_mag_analytic = compute_limiting_magnitude(
-                zp, bkg_result.global_rms, aperture_r, n_sigma=5.0
             )
-            limiting_mag_robust = np.nan
-            if limiting_method == "robust":
-                robust_result = compute_robust_limiting_magnitude(
+            limiting_mag_analytic, limiting_mag_robust, limiting_mag = (
+                self._compute_limiting_magnitude_for_radius(
+                    img_path=img_path,
+                    result=result,
                     data_sub=data_sub,
-                    zeropoint=zp,
-                    aperture_radius_pixels=aperture_r,
-                    err=bkg_result.global_rms,
-                    extraction_threshold=self.config.extraction_threshold,
-                    extraction_min_area=self.config.extraction_min_area,
-                    n_samples=self.config.limiting_mag_robust_n_samples,
-                    mask_dilate_pixels=self.config.limiting_mag_robust_mask_dilate_pixels,
-                    edge_buffer_pixels=self.config.limiting_mag_robust_edge_buffer_pixels,
-                    sigma_estimator=self.config.limiting_mag_robust_sigma_estimator,
-                    max_draws_multiplier=self.config.limiting_mag_robust_max_draws_multiplier,
-                    random_seed=self.config.limiting_mag_robust_random_seed,
-                    extra_mask=robust_extra_mask,
-                )
-                limiting_mag_robust = robust_result.limiting_mag
-                for warning_text in robust_result.warnings:
-                    self.logger.warning(
-                        "%s (%s, aperture_id=%d)",
-                        warning_text,
-                        img_path.name,
-                        aperture_id,
-                    )
-
-                self._record_limiting_mag_diagnostic(
-                    result,
-                    {
-                        "image_file": img_path.name,
-                        "aperture_id": aperture_id,
-                        "is_forced": False,
-                        "method": "robust",
-                        "n_samples_requested": robust_result.n_samples_requested,
-                        "n_samples_used": robust_result.n_samples_used,
-                        "aperture_radius_pixels": robust_result.aperture_radius_pixels,
-                        "sigma_ap": robust_result.sigma_ap,
-                        "f5": robust_result.flux_limit,
-                        "fraction_masked": robust_result.fraction_masked,
-                        "warnings": robust_result.warnings,
-                    },
-                )
-
-                self.logger.info(
-                    "Robust limiting mag (%s, aperture_id=%d): m5=%.3f, sigma_ap=%.3f, "
-                    "f5=%.3f, n=%d/%d, r=%.2f px, masked=%.1f%%",
-                    img_path.name,
-                    aperture_id,
-                    robust_result.limiting_mag,
-                    robust_result.sigma_ap,
-                    robust_result.flux_limit,
-                    robust_result.n_samples_used,
-                    robust_result.n_samples_requested,
-                    robust_result.aperture_radius_pixels,
-                    100.0 * robust_result.fraction_masked,
-                )
-                if np.isfinite(limiting_mag_robust):
-                    limiting_mag = limiting_mag_robust
-                else:
-                    limiting_mag = limiting_mag_analytic
-                    self.logger.warning(
-                        "Robust limiting magnitude failed for %s (aperture_id=%d); "
-                        "using analytic value.",
-                        img_path.name,
-                        aperture_id,
-                    )
-            else:
-                limiting_mag = limiting_mag_analytic
-
-            # Append all sources to result
-            for i in range(len(flux_valid)):
-                result.add_measurement(
-                    image_file=img_path.name,
-                    telescope=image.telescope,
-                    filter=image.filter_name,
-                    exptime=image.exptime,
-                    mjd=image.mjd,
-                    jd=image.mid_jd,
-                    x_pix=float(x[i]),
-                    y_pix=float(y[i]),
-                    ra=float(world_coords[i].ra.deg),
-                    dec=float(world_coords[i].dec.deg),
-                    flux=float(flux_valid[i]),
-                    flux_err=float(flux_err_valid[i]),
-                    snr=float(snr[i]),
-                    ins_mag=float(ins_mag[i]),
-                    ins_mag_err=float(ins_mag_err[i]),
-                    calibrated_mag=float(cal_mag[i]),
-                    calibrated_mag_err=float(cal_mag_err[i]),
-                    zeropoint=float(zp) if not np.isnan(zp) else np.nan,
-                    zeropoint_err=float(zp_err) if not np.isnan(zp_err) else np.nan,
-                    aperture_id=aperture_id,
+                    bkg_global_rms=bkg_result.global_rms,
+                    zp=zp,
                     aperture_radius=aperture_r,
-                    fwhm=ext_result.fwhm,
-                    n_cal_stars=n_cal,
-                    limiting_mag_analytic=limiting_mag_analytic,
-                    limiting_mag_robust=limiting_mag_robust,
-                    limiting_mag=limiting_mag,
+                    limiting_method=limiting_method,
+                    robust_extra_mask=robust_extra_mask,
+                    aperture_id=aperture_id,
                     is_forced=False,
-                    flag=int(flag_valid[i]),
                 )
+            )
+
+            self._append_measurement_rows(
+                result=result,
+                image=image,
+                img_path=img_path,
+                x_pix=np.asarray(x, dtype=float),
+                y_pix=np.asarray(y, dtype=float),
+                ra_deg=np.asarray(world_coords.ra.deg, dtype=float),
+                dec_deg=np.asarray(world_coords.dec.deg, dtype=float),
+                flux=np.asarray(flux_valid, dtype=float),
+                flux_err=np.asarray(flux_err_valid, dtype=float),
+                snr=np.asarray(snr, dtype=float),
+                ins_mag=np.asarray(ins_mag, dtype=float),
+                ins_mag_err=np.asarray(ins_mag_err, dtype=float),
+                calibrated_mag=np.asarray(cal_mag, dtype=float),
+                calibrated_mag_err=np.asarray(cal_mag_err, dtype=float),
+                zp=zp,
+                zp_err=zp_err,
+                aperture_id=aperture_id,
+                aperture_radius=aperture_r,
+                fwhm=ext_result.fwhm,
+                n_cal_stars=n_cal,
+                limiting_mag_analytic=limiting_mag_analytic,
+                limiting_mag_robust=limiting_mag_robust,
+                limiting_mag=limiting_mag,
+                is_forced=False,
+                flags=np.asarray(flag_valid, dtype=int),
+            )
 
         # Forced photometry at specified positions
         if forced_positions is not None:
             forced_aperture_r = self.config.forced_photometry_aperture_radius
 
-            # Convert forced sky positions to pixel coordinates
-            # Handle both single and multiple positions
-            if len(forced_positions) == 1:
-                forced_pix = image.wcs.world_to_pixel(forced_positions[0])
-                forced_x = np.array([forced_pix[0]])
-                forced_y = np.array([forced_pix[1]])
-            else:
-                # Combine into single SkyCoord for batch conversion
-                combined_coords = SkyCoord(
-                    ra=[c.ra for c in forced_positions],
-                    dec=[c.dec for c in forced_positions],
-                )
-                forced_pix = image.wcs.world_to_pixel(combined_coords)
-                forced_x = np.array(forced_pix[0])
-                forced_y = np.array(forced_pix[1])
+            forced_x, forced_y = self._forced_positions_to_pixels(
+                image, forced_positions
+            )
 
             # Perform aperture photometry at forced positions
             flux_forced, flux_err_forced, flag_forced = sum_circle(
@@ -624,141 +530,73 @@ class Soap:
                 gain=image.gain,
             )
 
-            # Calculate limiting magnitude for forced photometry
-            limiting_mag_forced_analytic = compute_limiting_magnitude(
-                zp, bkg_result.global_rms, forced_aperture_r, n_sigma=5.0
+            (
+                forced_ins_mag,
+                forced_ins_mag_err,
+                forced_snr,
+                forced_cal_mag,
+                forced_cal_mag_err,
+            ) = self._compute_photometry_quantities(
+                flux=np.asarray(flux_forced, dtype=float),
+                flux_err=np.asarray(flux_err_forced, dtype=float),
+                zp=zp,
+                zp_err=zp_err,
+                aperture_r=forced_aperture_r,
+                bkg_global_back=bkg_result.global_back,
+                bkg_global_rms=bkg_result.global_rms,
+                gain=image.gain,
+                rdnoise=image.rdnoise,
             )
-            limiting_mag_forced_robust = np.nan
-            if limiting_method == "robust":
-                robust_forced = compute_robust_limiting_magnitude(
-                    data_sub=data_sub,
-                    zeropoint=zp,
-                    aperture_radius_pixels=forced_aperture_r,
-                    err=bkg_result.global_rms,
-                    extraction_threshold=self.config.extraction_threshold,
-                    extraction_min_area=self.config.extraction_min_area,
-                    n_samples=self.config.limiting_mag_robust_n_samples,
-                    mask_dilate_pixels=self.config.limiting_mag_robust_mask_dilate_pixels,
-                    edge_buffer_pixels=self.config.limiting_mag_robust_edge_buffer_pixels,
-                    sigma_estimator=self.config.limiting_mag_robust_sigma_estimator,
-                    max_draws_multiplier=self.config.limiting_mag_robust_max_draws_multiplier,
-                    random_seed=self.config.limiting_mag_robust_random_seed,
-                    extra_mask=robust_extra_mask,
-                )
-                limiting_mag_forced_robust = robust_forced.limiting_mag
-                for warning_text in robust_forced.warnings:
-                    self.logger.warning(
-                        "%s (%s, forced_photometry)", warning_text, img_path.name
-                    )
-                self._record_limiting_mag_diagnostic(
-                    result,
-                    {
-                        "image_file": img_path.name,
-                        "aperture_id": 0,
-                        "is_forced": True,
-                        "method": "robust",
-                        "n_samples_requested": robust_forced.n_samples_requested,
-                        "n_samples_used": robust_forced.n_samples_used,
-                        "aperture_radius_pixels": robust_forced.aperture_radius_pixels,
-                        "sigma_ap": robust_forced.sigma_ap,
-                        "f5": robust_forced.flux_limit,
-                        "fraction_masked": robust_forced.fraction_masked,
-                        "warnings": robust_forced.warnings,
-                    },
-                )
-                self.logger.info(
-                    "Robust limiting mag (%s, forced): m5=%.3f, sigma_ap=%.3f, "
-                    "f5=%.3f, n=%d/%d, r=%.2f px, masked=%.1f%%",
-                    img_path.name,
-                    robust_forced.limiting_mag,
-                    robust_forced.sigma_ap,
-                    robust_forced.flux_limit,
-                    robust_forced.n_samples_used,
-                    robust_forced.n_samples_requested,
-                    robust_forced.aperture_radius_pixels,
-                    100.0 * robust_forced.fraction_masked,
-                )
-                if np.isfinite(limiting_mag_forced_robust):
-                    limiting_mag_forced = limiting_mag_forced_robust
-                else:
-                    limiting_mag_forced = limiting_mag_forced_analytic
-                    self.logger.warning(
-                        "Robust limiting magnitude failed for %s (forced); using analytic value.",
-                        img_path.name,
-                    )
-            else:
-                limiting_mag_forced = limiting_mag_forced_analytic
+            (
+                limiting_mag_forced_analytic,
+                limiting_mag_forced_robust,
+                limiting_mag_forced,
+            ) = self._compute_limiting_magnitude_for_radius(
+                img_path=img_path,
+                result=result,
+                data_sub=data_sub,
+                bkg_global_rms=bkg_result.global_rms,
+                zp=zp,
+                aperture_radius=forced_aperture_r,
+                limiting_method=limiting_method,
+                robust_extra_mask=robust_extra_mask,
+                aperture_id=0,
+                is_forced=True,
+            )
 
-            # Process each forced position
-            for i in range(len(forced_positions)):
-                flux_i = flux_forced[i]
-                flux_err_i = flux_err_forced[i]
-
-                # Handle negative/zero flux
-                if flux_i <= 0:
-                    ins_mag_i = np.nan
-                    ins_mag_err_i = np.nan
-                    snr_i = np.nan
-                else:
-                    ins_mag_i = -2.5 * np.log10(flux_i)
-                    ins_mag_err_i = 1.0857 * (flux_err_i / flux_i)
-                    snr_i = flux_i / flux_err_i
-
-                # Calibrated magnitude
-                if np.isnan(zp) or np.isnan(ins_mag_i):
-                    cal_mag_i = np.nan
-                    cal_mag_err_i = np.nan
-                else:
-                    cal_mag_i = ins_mag_i + zp
-                    n_pix = np.pi * forced_aperture_r**2
-                    n_bkgpix = np.pi * (3 * forced_aperture_r) ** 2
-                    cal_mag_err_i = ccd_magnitude_error(
-                        flux=flux_i,
-                        gain=image.gain,
-                        n_pix=n_pix,
-                        background=bkg_result.global_back,
-                        rdnoise=image.rdnoise,
-                        n_bkgpix=n_bkgpix,
-                        sigma_bkg=bkg_result.global_rms,
-                        sigma_zp=zp_err,
-                    )
-
-                result.add_measurement(
-                    image_file=img_path.name,
-                    telescope=image.telescope,
-                    filter=image.filter_name,
-                    exptime=image.exptime,
-                    mjd=image.mjd,
-                    jd=image.mid_jd,
-                    x_pix=float(forced_x[i]),
-                    y_pix=float(forced_y[i]),
-                    ra=float(forced_positions[i].ra.deg),
-                    dec=float(forced_positions[i].dec.deg),
-                    flux=float(flux_i),
-                    flux_err=float(flux_err_i),
-                    snr=float(snr_i) if not np.isnan(snr_i) else np.nan,
-                    ins_mag=float(ins_mag_i) if not np.isnan(ins_mag_i) else np.nan,
-                    ins_mag_err=float(ins_mag_err_i)
-                    if not np.isnan(ins_mag_err_i)
-                    else np.nan,
-                    calibrated_mag=float(cal_mag_i)
-                    if not np.isnan(cal_mag_i)
-                    else np.nan,
-                    calibrated_mag_err=float(cal_mag_err_i)
-                    if not np.isnan(cal_mag_err_i)
-                    else np.nan,
-                    zeropoint=float(zp) if not np.isnan(zp) else np.nan,
-                    zeropoint_err=float(zp_err) if not np.isnan(zp_err) else np.nan,
-                    aperture_id=0,
-                    aperture_radius=forced_aperture_r,
-                    fwhm=ext_result.fwhm,
-                    n_cal_stars=n_cal,
-                    limiting_mag_analytic=limiting_mag_forced_analytic,
-                    limiting_mag_robust=limiting_mag_forced_robust,
-                    limiting_mag=limiting_mag_forced,
-                    is_forced=True,
-                    flag=int(flag_forced[i]),
-                )
+            forced_ra = np.array(
+                [coord.ra.deg for coord in forced_positions], dtype=float
+            )
+            forced_dec = np.array(
+                [coord.dec.deg for coord in forced_positions], dtype=float
+            )
+            self._append_measurement_rows(
+                result=result,
+                image=image,
+                img_path=img_path,
+                x_pix=np.asarray(forced_x, dtype=float),
+                y_pix=np.asarray(forced_y, dtype=float),
+                ra_deg=forced_ra,
+                dec_deg=forced_dec,
+                flux=np.asarray(flux_forced, dtype=float),
+                flux_err=np.asarray(flux_err_forced, dtype=float),
+                snr=np.asarray(forced_snr, dtype=float),
+                ins_mag=np.asarray(forced_ins_mag, dtype=float),
+                ins_mag_err=np.asarray(forced_ins_mag_err, dtype=float),
+                calibrated_mag=np.asarray(forced_cal_mag, dtype=float),
+                calibrated_mag_err=np.asarray(forced_cal_mag_err, dtype=float),
+                zp=zp,
+                zp_err=zp_err,
+                aperture_id=0,
+                aperture_radius=forced_aperture_r,
+                fwhm=ext_result.fwhm,
+                n_cal_stars=n_cal,
+                limiting_mag_analytic=limiting_mag_forced_analytic,
+                limiting_mag_robust=limiting_mag_forced_robust,
+                limiting_mag=limiting_mag_forced,
+                is_forced=True,
+                flags=np.asarray(flag_forced, dtype=int),
+            )
 
         # Save intermediate products if enabled
         if self.config.save_intermediates:
@@ -807,6 +645,243 @@ class Soap:
                 ref_coords=ref_coords,
                 matched_mask=match_mask,
                 save_path=debug_path,
+            )
+
+    def _resolve_limiting_method(self) -> str:
+        """Return limiting-magnitude method with validation and fallback."""
+        limiting_method = self.config.limiting_mag_method.lower().strip()
+        if limiting_method not in {"analytic", "robust"}:
+            self.logger.warning(
+                "Unknown limiting_mag.method=%r; falling back to analytic.",
+                self.config.limiting_mag_method,
+            )
+            return "analytic"
+        return limiting_method
+
+    def _build_robust_extra_mask(
+        self, image: FITSImage, limiting_method: str
+    ) -> np.ndarray | None:
+        """Build extra bad-pixel/saturation mask for robust limiting magnitude."""
+        if limiting_method != "robust":
+            return None
+
+        robust_extra_mask = ~np.isfinite(image.data)
+        sat_level = image.header.get("SATURATE")
+        if sat_level is not None:
+            robust_extra_mask = robust_extra_mask | (image.data >= float(sat_level))
+        return robust_extra_mask
+
+    def _compute_photometry_quantities(
+        self,
+        flux: np.ndarray,
+        flux_err: np.ndarray,
+        zp: float,
+        zp_err: float,
+        aperture_r: float,
+        bkg_global_back: float,
+        bkg_global_rms: float,
+        gain: float,
+        rdnoise: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Compute instrumental/calibrated magnitude quantities from flux arrays."""
+        flux = np.asarray(flux, dtype=float)
+        flux_err = np.asarray(flux_err, dtype=float)
+
+        ins_mag = np.full_like(flux, np.nan, dtype=float)
+        ins_mag_err = np.full_like(flux, np.nan, dtype=float)
+        snr = np.full_like(flux, np.nan, dtype=float)
+        cal_mag = np.full_like(flux, np.nan, dtype=float)
+        cal_mag_err = np.full_like(flux, np.nan, dtype=float)
+
+        valid = flux > 0
+        if not np.any(valid):
+            return ins_mag, ins_mag_err, snr, cal_mag, cal_mag_err
+
+        ins_mag[valid] = -2.5 * np.log10(flux[valid])
+        ins_mag_err[valid] = 1.0857 * (flux_err[valid] / flux[valid])
+        snr[valid] = flux[valid] / flux_err[valid]
+
+        if np.isnan(zp):
+            return ins_mag, ins_mag_err, snr, cal_mag, cal_mag_err
+
+        cal_mag[valid] = ins_mag[valid] + zp
+        n_pix = np.pi * aperture_r**2
+        n_bkgpix = np.pi * (3 * aperture_r) ** 2
+        cal_mag_err_valid = ccd_magnitude_error(
+            flux=flux[valid],
+            gain=gain,
+            n_pix=n_pix,
+            background=bkg_global_back,
+            rdnoise=rdnoise,
+            n_bkgpix=n_bkgpix,
+            sigma_bkg=bkg_global_rms,
+            sigma_zp=zp_err,
+        )
+        cal_mag_err[valid] = np.atleast_1d(cal_mag_err_valid)
+        return ins_mag, ins_mag_err, snr, cal_mag, cal_mag_err
+
+    def _compute_limiting_magnitude_for_radius(
+        self,
+        *,
+        img_path: Path,
+        result: PhotometryResult,
+        data_sub: np.ndarray,
+        bkg_global_rms: float,
+        zp: float,
+        aperture_radius: float,
+        limiting_method: str,
+        robust_extra_mask: np.ndarray | None,
+        aperture_id: int,
+        is_forced: bool,
+    ) -> tuple[float, float, float]:
+        """Compute analytic/robust/selected limiting magnitudes for one aperture."""
+        limiting_mag_analytic = compute_limiting_magnitude(
+            zp, bkg_global_rms, aperture_radius, n_sigma=5.0
+        )
+        if limiting_method != "robust":
+            return limiting_mag_analytic, np.nan, limiting_mag_analytic
+
+        robust_result = compute_robust_limiting_magnitude(
+            data_sub=data_sub,
+            zeropoint=zp,
+            aperture_radius_pixels=aperture_radius,
+            err=bkg_global_rms,
+            extraction_threshold=self.config.extraction_threshold,
+            extraction_min_area=self.config.extraction_min_area,
+            n_samples=self.config.limiting_mag_robust_n_samples,
+            mask_dilate_pixels=self.config.limiting_mag_robust_mask_dilate_pixels,
+            edge_buffer_pixels=self.config.limiting_mag_robust_edge_buffer_pixels,
+            sigma_estimator=self.config.limiting_mag_robust_sigma_estimator,
+            max_draws_multiplier=self.config.limiting_mag_robust_max_draws_multiplier,
+            random_seed=self.config.limiting_mag_robust_random_seed,
+            extra_mask=robust_extra_mask,
+        )
+        limiting_mag_robust = robust_result.limiting_mag
+        context = "forced_photometry" if is_forced else f"aperture_id={aperture_id}"
+        for warning_text in robust_result.warnings:
+            self.logger.warning("%s (%s, %s)", warning_text, img_path.name, context)
+
+        self._record_limiting_mag_diagnostic(
+            result,
+            {
+                "image_file": img_path.name,
+                "aperture_id": aperture_id,
+                "is_forced": is_forced,
+                "method": "robust",
+                "n_samples_requested": robust_result.n_samples_requested,
+                "n_samples_used": robust_result.n_samples_used,
+                "aperture_radius_pixels": robust_result.aperture_radius_pixels,
+                "sigma_ap": robust_result.sigma_ap,
+                "f5": robust_result.flux_limit,
+                "fraction_masked": robust_result.fraction_masked,
+                "warnings": robust_result.warnings,
+            },
+        )
+        self.logger.info(
+            "Robust limiting mag (%s, %s): m5=%.3f, sigma_ap=%.3f, "
+            "f5=%.3f, n=%d/%d, r=%.2f px, masked=%.1f%%",
+            img_path.name,
+            context,
+            robust_result.limiting_mag,
+            robust_result.sigma_ap,
+            robust_result.flux_limit,
+            robust_result.n_samples_used,
+            robust_result.n_samples_requested,
+            robust_result.aperture_radius_pixels,
+            100.0 * robust_result.fraction_masked,
+        )
+
+        if np.isfinite(limiting_mag_robust):
+            return limiting_mag_analytic, limiting_mag_robust, limiting_mag_robust
+
+        self.logger.warning(
+            "Robust limiting magnitude failed for %s (%s); using analytic value.",
+            img_path.name,
+            context,
+        )
+        return limiting_mag_analytic, limiting_mag_robust, limiting_mag_analytic
+
+    def _forced_positions_to_pixels(
+        self, image: FITSImage, forced_positions: list[SkyCoord]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert forced sky positions to pixel arrays."""
+        if len(forced_positions) == 1:
+            forced_pix = image.wcs.world_to_pixel(forced_positions[0])
+            return np.array([forced_pix[0]]), np.array([forced_pix[1]])
+
+        combined_coords = SkyCoord(
+            ra=[c.ra for c in forced_positions],
+            dec=[c.dec for c in forced_positions],
+        )
+        forced_pix = image.wcs.world_to_pixel(combined_coords)
+        return np.array(forced_pix[0]), np.array(forced_pix[1])
+
+    def _append_measurement_rows(
+        self,
+        *,
+        result: PhotometryResult,
+        image: FITSImage,
+        img_path: Path,
+        x_pix: np.ndarray,
+        y_pix: np.ndarray,
+        ra_deg: np.ndarray,
+        dec_deg: np.ndarray,
+        flux: np.ndarray,
+        flux_err: np.ndarray,
+        snr: np.ndarray,
+        ins_mag: np.ndarray,
+        ins_mag_err: np.ndarray,
+        calibrated_mag: np.ndarray,
+        calibrated_mag_err: np.ndarray,
+        zp: float,
+        zp_err: float,
+        aperture_id: int,
+        aperture_radius: float,
+        fwhm: float,
+        n_cal_stars: int,
+        limiting_mag_analytic: float,
+        limiting_mag_robust: float,
+        limiting_mag: float,
+        is_forced: bool,
+        flags: np.ndarray,
+    ) -> None:
+        """Append one row per source/position to the result table."""
+        for i in range(len(flux)):
+            result.add_measurement(
+                image_file=img_path.name,
+                telescope=image.telescope,
+                filter=image.filter_name,
+                exptime=image.exptime,
+                mjd=image.mjd,
+                jd=image.mid_jd,
+                x_pix=float(x_pix[i]),
+                y_pix=float(y_pix[i]),
+                ra=float(ra_deg[i]),
+                dec=float(dec_deg[i]),
+                flux=float(flux[i]),
+                flux_err=float(flux_err[i]),
+                snr=float(snr[i]) if np.isfinite(snr[i]) else np.nan,
+                ins_mag=float(ins_mag[i]) if np.isfinite(ins_mag[i]) else np.nan,
+                ins_mag_err=float(ins_mag_err[i])
+                if np.isfinite(ins_mag_err[i])
+                else np.nan,
+                calibrated_mag=float(calibrated_mag[i])
+                if np.isfinite(calibrated_mag[i])
+                else np.nan,
+                calibrated_mag_err=float(calibrated_mag_err[i])
+                if np.isfinite(calibrated_mag_err[i])
+                else np.nan,
+                zeropoint=float(zp) if not np.isnan(zp) else np.nan,
+                zeropoint_err=float(zp_err) if not np.isnan(zp_err) else np.nan,
+                aperture_id=aperture_id,
+                aperture_radius=aperture_radius,
+                fwhm=fwhm,
+                n_cal_stars=n_cal_stars,
+                limiting_mag_analytic=limiting_mag_analytic,
+                limiting_mag_robust=limiting_mag_robust,
+                limiting_mag=limiting_mag,
+                is_forced=is_forced,
+                flag=int(flags[i]),
             )
 
     def _record_limiting_mag_diagnostic(
@@ -997,34 +1072,8 @@ class Soap:
     # Cache and cleanup utilities
     # ------------------------------------------------------------------
     def cache_info(self) -> dict:
-        """Get information about cached files for this observation.
-
-        Returns
-        -------
-        dict
-            Dictionary with cache statistics:
-            - n_images: Number of FITS files in image_dir
-            - n_results: Number of result files in result_dir
-            - total_size_mb: Total size in megabytes
-            - image_dir: Path to image directory
-            - result_dir: Path to result directory
-        """
-        image_files = list(self.image_dir.glob("*.fits"))
-        result_files = (
-            list(self.result_dir.glob("*")) if self.result_dir.exists() else []
-        )
-
-        image_size = sum(f.stat().st_size for f in image_files if f.is_file())
-        result_size = sum(f.stat().st_size for f in result_files if f.is_file())
-        total_size_mb = (image_size + result_size) / (1024 * 1024)
-
-        return {
-            "n_images": len(image_files),
-            "n_results": len(result_files),
-            "total_size_mb": round(total_size_mb, 2),
-            "image_dir": str(self.image_dir),
-            "result_dir": str(self.result_dir),
-        }
+        """Get information about cached files for this observation."""
+        return get_cache_info(self.image_dir, self.result_dir)
 
     def clear_cache(
         self,
@@ -1032,101 +1081,29 @@ class Soap:
         results: bool = True,
         confirm: bool = True,
     ) -> dict:
-        """Clear cached files for this observation.
-
-        Parameters
-        ----------
-        images : bool
-            Clear downloaded FITS images from image_dir.
-        results : bool
-            Clear result files from result_dir.
-        confirm : bool
-            If True, requires user confirmation before deletion.
-
-        Returns
-        -------
-        dict
-            Dictionary with counts of deleted files:
-            - images_deleted: Number of FITS files removed
-            - results_deleted: Number of result files removed
-        """
-        if confirm:
-            msg = f"Delete cache for observation {self.observation_id}?"
-            if images and results:
-                msg += f"\n  - {self.image_dir} (images)"
-                msg += f"\n  - {self.result_dir} (results)"
-            elif images:
-                msg += f"\n  - {self.image_dir} (images only)"
-            elif results:
-                msg += f"\n  - {self.result_dir} (results only)"
-            msg += "\nProceed? (y/n): "
-
-            response = input(msg)
-            if response.lower() != "y":
-                self.logger.info("Cache clear cancelled.")
-                return {"images_deleted": 0, "results_deleted": 0}
-
-        images_deleted = 0
-        results_deleted = 0
-
-        if images and self.image_dir.exists():
-            image_files = list(self.image_dir.glob("*.fits"))
-            for f in image_files:
-                f.unlink()
-                images_deleted += 1
+        """Clear cached files for this observation."""
+        stats = clear_observation_cache(
+            image_dir=self.image_dir,
+            result_dir=self.result_dir,
+            observation_id=self.observation_id,
+            images=images,
+            results=results,
+            confirm=confirm,
+        )
+        if stats["images_deleted"] > 0:
             self.logger.info(
-                "Deleted %d images from %s", images_deleted, self.image_dir
+                "Deleted %d images from %s", stats["images_deleted"], self.image_dir
             )
-
-        if results and self.result_dir.exists():
-            result_files = list(self.result_dir.glob("*"))
-            for f in result_files:
-                if f.is_file():
-                    f.unlink()
-                    results_deleted += 1
+        if stats["results_deleted"] > 0:
             self.logger.info(
-                "Deleted %d results from %s", results_deleted, self.result_dir
+                "Deleted %d results from %s", stats["results_deleted"], self.result_dir
             )
-
-        return {"images_deleted": images_deleted, "results_deleted": results_deleted}
+        return stats
 
     @staticmethod
     def _dir_stats(path: Path) -> tuple[int, int, float]:
         """Return (n_files, total_size_bytes, latest_mtime) for a path tree."""
-        if not path.exists():
-            return 0, 0, 0.0
-
-        n_files = 0
-        total_size = 0
-        try:
-            latest_mtime = path.stat().st_mtime
-        except OSError:
-            latest_mtime = 0.0
-
-        stack: list[Path] = [path]
-        while stack:
-            current = stack.pop()
-            try:
-                with os.scandir(current) as entries:
-                    for entry in entries:
-                        try:
-                            if entry.is_dir(follow_symlinks=False):
-                                stack.append(Path(entry.path))
-                                latest_mtime = max(
-                                    latest_mtime,
-                                    entry.stat(follow_symlinks=False).st_mtime,
-                                )
-                            elif entry.is_file(follow_symlinks=False):
-                                st = entry.stat(follow_symlinks=False)
-                                n_files += 1
-                                total_size += st.st_size
-                                latest_mtime = max(latest_mtime, st.st_mtime)
-                        except OSError:
-                            continue
-            except OSError:
-                continue
-
-        return n_files, total_size, latest_mtime
+        return cache_dir_stats(path)
 
     @staticmethod
     def prune_cache(
@@ -1136,138 +1113,14 @@ class Soap:
         keep_recent: int = 1,
         confirm: bool = True,
     ) -> dict:
-        """Prune old observation caches until total disk usage is below a limit.
-
-        Parameters
-        ----------
-        max_total_size_mb : float
-            Maximum allowed cache size in megabytes across all observations.
-        image_dir : str or Path
-            Base directory containing per-observation image subdirectories.
-        result_dir : str or Path
-            Base directory containing per-observation result subdirectories.
-        keep_recent : int
-            Number of most-recent observations to always keep.
-        confirm : bool
-            Require confirmation before deleting any files.
-
-        Returns
-        -------
-        dict
-            Pruning statistics.
-        """
-        if max_total_size_mb <= 0:
-            raise ValueError("max_total_size_mb must be > 0")
-
-        keep_recent = max(0, int(keep_recent))
-        max_total_size_bytes = int(max_total_size_mb * 1024 * 1024)
-        image_base = Path(image_dir)
-        result_base = Path(result_dir)
-
-        obs_ids: set[str] = set()
-        if image_base.exists():
-            obs_ids.update(p.name for p in image_base.iterdir() if p.is_dir())
-        if result_base.exists():
-            obs_ids.update(p.name for p in result_base.iterdir() if p.is_dir())
-
-        if not obs_ids:
-            return {
-                "observations_deleted": [],
-                "files_deleted": 0,
-                "bytes_deleted": 0,
-                "total_before_mb": 0.0,
-                "total_after_mb": 0.0,
-                "target_mb": round(max_total_size_mb, 2),
-            }
-
-        usage = []
-        total_before = 0
-        for obs_id in obs_ids:
-            img_path = image_base / obs_id
-            res_path = result_base / obs_id
-            n_img, size_img, mtime_img = Soap._dir_stats(img_path)
-            n_res, size_res, mtime_res = Soap._dir_stats(res_path)
-            obs_size = size_img + size_res
-            if obs_size == 0:
-                continue
-            total_before += obs_size
-            usage.append(
-                {
-                    "obs_id": obs_id,
-                    "size": obs_size,
-                    "files": n_img + n_res,
-                    "mtime": max(mtime_img, mtime_res),
-                    "img_path": img_path,
-                    "res_path": res_path,
-                }
-            )
-
-        if total_before <= max_total_size_bytes:
-            total_mb = round(total_before / (1024 * 1024), 2)
-            return {
-                "observations_deleted": [],
-                "files_deleted": 0,
-                "bytes_deleted": 0,
-                "total_before_mb": total_mb,
-                "total_after_mb": total_mb,
-                "target_mb": round(max_total_size_mb, 2),
-            }
-
-        usage.sort(key=lambda x: x["mtime"], reverse=True)
-        keep_ids = {u["obs_id"] for u in usage[:keep_recent]}
-        candidates = [
-            u
-            for u in sorted(usage, key=lambda x: x["mtime"])
-            if u["obs_id"] not in keep_ids
-        ]
-
-        if confirm:
-            current_mb = total_before / (1024 * 1024)
-            msg = (
-                f"Prune SOAP cache to <= {max_total_size_mb:.2f} MB?"
-                f"\nCurrent usage: {current_mb:.2f} MB across {len(usage)} observations."
-                f"\nProceed? (y/n): "
-            )
-            if input(msg).strip().lower() != "y":
-                return {
-                    "observations_deleted": [],
-                    "files_deleted": 0,
-                    "bytes_deleted": 0,
-                    "total_before_mb": round(current_mb, 2),
-                    "total_after_mb": round(current_mb, 2),
-                    "target_mb": round(max_total_size_mb, 2),
-                }
-
-        deleted_obs: list[int | str] = []
-        files_deleted = 0
-        bytes_deleted = 0
-        total_after = total_before
-
-        for obs in candidates:
-            if total_after <= max_total_size_bytes:
-                break
-
-            if obs["img_path"].exists():
-                shutil.rmtree(obs["img_path"], ignore_errors=True)
-            if obs["res_path"].exists():
-                shutil.rmtree(obs["res_path"], ignore_errors=True)
-
-            total_after -= obs["size"]
-            bytes_deleted += obs["size"]
-            files_deleted += obs["files"]
-            try:
-                deleted_obs.append(int(obs["obs_id"]))
-            except ValueError:
-                deleted_obs.append(obs["obs_id"])
-
-        return {
-            "observations_deleted": deleted_obs,
-            "files_deleted": files_deleted,
-            "bytes_deleted": bytes_deleted,
-            "total_before_mb": round(total_before / (1024 * 1024), 2),
-            "total_after_mb": round(max(total_after, 0) / (1024 * 1024), 2),
-            "target_mb": round(max_total_size_mb, 2),
-        }
+        """Prune old observation caches until total disk usage is below a limit."""
+        return prune_cache_admin(
+            max_total_size_mb=max_total_size_mb,
+            image_dir=image_dir,
+            result_dir=result_dir,
+            keep_recent=keep_recent,
+            confirm=confirm,
+        )
 
     @staticmethod
     def cleanup_observation(
@@ -1278,64 +1131,15 @@ class Soap:
         results: bool = True,
         confirm: bool = True,
     ) -> dict:
-        """Clean up all files for a specific observation (static method).
-
-        Parameters
-        ----------
-        observation_id : int
-            Observation ID to clean up.
-        image_dir : str or Path
-            Base directory for images.
-        result_dir : str or Path
-            Base directory for results.
-        images : bool
-            Remove downloaded FITS images.
-        results : bool
-            Remove generated result files.
-        confirm : bool
-            Require confirmation before deletion.
-
-        Returns
-        -------
-        dict
-            Deletion statistics.
-        """
-        img_path = Path(image_dir) / str(observation_id)
-        res_path = Path(result_dir) / str(observation_id)
-        n_img, bytes_img, _ = Soap._dir_stats(img_path)
-        n_res, bytes_res, _ = Soap._dir_stats(res_path)
-
-        if confirm:
-            msg = f"Delete all files for observation {observation_id}?"
-            if images and img_path.exists():
-                msg += f"\n  - {img_path}"
-            if results and res_path.exists():
-                msg += f"\n  - {res_path}"
-            msg += "\nProceed? (y/n): "
-
-            response = input(msg)
-            if response.lower() != "y":
-                return {"images_deleted": 0, "results_deleted": 0, "bytes_deleted": 0}
-
-        images_deleted = 0
-        results_deleted = 0
-        bytes_deleted = 0
-
-        if images and img_path.exists():
-            images_deleted = n_img
-            bytes_deleted += bytes_img
-            shutil.rmtree(img_path, ignore_errors=True)
-
-        if results and res_path.exists():
-            results_deleted = n_res
-            bytes_deleted += bytes_res
-            shutil.rmtree(res_path, ignore_errors=True)
-
-        return {
-            "images_deleted": images_deleted,
-            "results_deleted": results_deleted,
-            "bytes_deleted": bytes_deleted,
-        }
+        """Clean up all files for a specific observation (static method)."""
+        return cleanup_observation_admin(
+            observation_id=observation_id,
+            image_dir=image_dir,
+            result_dir=result_dir,
+            images=images,
+            results=results,
+            confirm=confirm,
+        )
 
     # ------------------------------------------------------------------
     # Debugging utilities
