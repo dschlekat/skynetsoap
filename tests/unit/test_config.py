@@ -11,7 +11,7 @@ class TestLoadConfig:
         assert isinstance(default_config, SOAPConfig)
         assert default_config.extraction_threshold == 1.5
         assert default_config.extraction_min_area == 5
-        assert default_config.aperture_mode == "fwhm_scaled"
+        assert default_config.aperture_mode == "optimal"
         assert default_config.calibration_sigma_clip == 3.0
 
     def test_config_from_dict(self):

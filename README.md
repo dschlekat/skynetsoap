@@ -187,6 +187,36 @@ s_debug = Soap(observation_id=12345, config=cfg_debug)
 result = s_debug.run()  # Saves debug plots to soap_debug/12345/
 ```
 
+### Cache management
+
+Inspect and clean per-observation cache files:
+
+```python
+from skynetsoap import Soap
+
+s = Soap(observation_id=12345)
+print(s.cache_info())
+
+# Clear only downloaded FITS files for this observation
+s.clear_cache(images=True, results=False, confirm=False)
+
+# Static cleanup for any observation ID
+Soap.cleanup_observation(12345, images=True, results=True, confirm=False)
+```
+
+Enforce a disk budget across multiple observation runs:
+
+```python
+from skynetsoap import Soap
+
+stats = Soap.prune_cache(
+    max_total_size_mb=2048,  # keep total SOAP cache under 2 GB
+    keep_recent=2,           # always keep the 2 most recent observations
+    confirm=False,
+)
+print(stats)
+```
+
 ## Configuration
 
 Default parameters are in `skynetsoap/config/defaults.toml`. Override with a custom TOML file:

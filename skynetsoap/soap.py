@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import glob
+import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -32,10 +34,10 @@ warnings.simplefilter("ignore", category=AstropyWarning)
 
 # TODO: Add clarity for magnitude systems in the results, e.g. by including a "cal_mag_system" column that specifies the system of the calibrated magnitudes (e.g. "AB", "Vega"). Stick with the system used by the input data, but provide a way to convert if needed.
 # TODO: Add support for parallel processing of images to speed up the pipeline on large datasets, with careful handling of shared resources like the reference catalog.
-# TODO: Add util methods to clean up downloaded images and results for a given observation ID, or to manage disk usage across multiple runs.
 # TODO: Add more robust handling of edge cases like no sources detected, no calibrators, failed astrometry, etc.
 # TODO: Rename package and core class to skynetphot and SkynetPhot for better clarity and discoverability.
 # TODO: Add differential photometry mode that uses an ensemble of reference stars in the field to correct for systematics and improve precision, especially for time-series data. This mode should only report flux, and any target source extraction should return a normalized flux relative to its median flux across the observation.
+# TODO: Review repo's code organization, moving methods from soap.py to different modules as needed to keep the core class focused on orchestration and high-level logic, while utility functions and specific steps are implemented in separate files for better maintainability.
 
 
 class Soap:
@@ -103,6 +105,10 @@ class Soap:
         Get information about cached files for this observation.
     clear_cache(images=True, results=True, confirm=True)
         Clear cached files for this observation.
+    cleanup_observation(observation_id, image_dir="soap_images", result_dir="soap_results", ...)
+        Remove cached files for a specific observation ID.
+    prune_cache(max_total_size_mb, image_dir="soap_images", result_dir="soap_results", ...)
+        Prune oldest observation caches to stay under a disk budget.
 
     Examples
     --------
@@ -921,10 +927,191 @@ class Soap:
         return {"images_deleted": images_deleted, "results_deleted": results_deleted}
 
     @staticmethod
+    def _dir_stats(path: Path) -> tuple[int, int, float]:
+        """Return (n_files, total_size_bytes, latest_mtime) for a path tree."""
+        if not path.exists():
+            return 0, 0, 0.0
+
+        n_files = 0
+        total_size = 0
+        try:
+            latest_mtime = path.stat().st_mtime
+        except OSError:
+            latest_mtime = 0.0
+
+        stack: list[Path] = [path]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                stack.append(Path(entry.path))
+                                latest_mtime = max(
+                                    latest_mtime,
+                                    entry.stat(follow_symlinks=False).st_mtime,
+                                )
+                            elif entry.is_file(follow_symlinks=False):
+                                st = entry.stat(follow_symlinks=False)
+                                n_files += 1
+                                total_size += st.st_size
+                                latest_mtime = max(latest_mtime, st.st_mtime)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+
+        return n_files, total_size, latest_mtime
+
+    @staticmethod
+    def prune_cache(
+        max_total_size_mb: float,
+        image_dir: str | Path = "soap_images",
+        result_dir: str | Path = "soap_results",
+        keep_recent: int = 1,
+        confirm: bool = True,
+    ) -> dict:
+        """Prune old observation caches until total disk usage is below a limit.
+
+        Parameters
+        ----------
+        max_total_size_mb : float
+            Maximum allowed cache size in megabytes across all observations.
+        image_dir : str or Path
+            Base directory containing per-observation image subdirectories.
+        result_dir : str or Path
+            Base directory containing per-observation result subdirectories.
+        keep_recent : int
+            Number of most-recent observations to always keep.
+        confirm : bool
+            Require confirmation before deleting any files.
+
+        Returns
+        -------
+        dict
+            Pruning statistics.
+        """
+        if max_total_size_mb <= 0:
+            raise ValueError("max_total_size_mb must be > 0")
+
+        keep_recent = max(0, int(keep_recent))
+        max_total_size_bytes = int(max_total_size_mb * 1024 * 1024)
+        image_base = Path(image_dir)
+        result_base = Path(result_dir)
+
+        obs_ids: set[str] = set()
+        if image_base.exists():
+            obs_ids.update(p.name for p in image_base.iterdir() if p.is_dir())
+        if result_base.exists():
+            obs_ids.update(p.name for p in result_base.iterdir() if p.is_dir())
+
+        if not obs_ids:
+            return {
+                "observations_deleted": [],
+                "files_deleted": 0,
+                "bytes_deleted": 0,
+                "total_before_mb": 0.0,
+                "total_after_mb": 0.0,
+                "target_mb": round(max_total_size_mb, 2),
+            }
+
+        usage = []
+        total_before = 0
+        for obs_id in obs_ids:
+            img_path = image_base / obs_id
+            res_path = result_base / obs_id
+            n_img, size_img, mtime_img = Soap._dir_stats(img_path)
+            n_res, size_res, mtime_res = Soap._dir_stats(res_path)
+            obs_size = size_img + size_res
+            if obs_size == 0:
+                continue
+            total_before += obs_size
+            usage.append(
+                {
+                    "obs_id": obs_id,
+                    "size": obs_size,
+                    "files": n_img + n_res,
+                    "mtime": max(mtime_img, mtime_res),
+                    "img_path": img_path,
+                    "res_path": res_path,
+                }
+            )
+
+        if total_before <= max_total_size_bytes:
+            total_mb = round(total_before / (1024 * 1024), 2)
+            return {
+                "observations_deleted": [],
+                "files_deleted": 0,
+                "bytes_deleted": 0,
+                "total_before_mb": total_mb,
+                "total_after_mb": total_mb,
+                "target_mb": round(max_total_size_mb, 2),
+            }
+
+        usage.sort(key=lambda x: x["mtime"], reverse=True)
+        keep_ids = {u["obs_id"] for u in usage[:keep_recent]}
+        candidates = [
+            u
+            for u in sorted(usage, key=lambda x: x["mtime"])
+            if u["obs_id"] not in keep_ids
+        ]
+
+        if confirm:
+            current_mb = total_before / (1024 * 1024)
+            msg = (
+                f"Prune SOAP cache to <= {max_total_size_mb:.2f} MB?"
+                f"\nCurrent usage: {current_mb:.2f} MB across {len(usage)} observations."
+                f"\nProceed? (y/n): "
+            )
+            if input(msg).strip().lower() != "y":
+                return {
+                    "observations_deleted": [],
+                    "files_deleted": 0,
+                    "bytes_deleted": 0,
+                    "total_before_mb": round(current_mb, 2),
+                    "total_after_mb": round(current_mb, 2),
+                    "target_mb": round(max_total_size_mb, 2),
+                }
+
+        deleted_obs: list[int | str] = []
+        files_deleted = 0
+        bytes_deleted = 0
+        total_after = total_before
+
+        for obs in candidates:
+            if total_after <= max_total_size_bytes:
+                break
+
+            if obs["img_path"].exists():
+                shutil.rmtree(obs["img_path"], ignore_errors=True)
+            if obs["res_path"].exists():
+                shutil.rmtree(obs["res_path"], ignore_errors=True)
+
+            total_after -= obs["size"]
+            bytes_deleted += obs["size"]
+            files_deleted += obs["files"]
+            try:
+                deleted_obs.append(int(obs["obs_id"]))
+            except ValueError:
+                deleted_obs.append(obs["obs_id"])
+
+        return {
+            "observations_deleted": deleted_obs,
+            "files_deleted": files_deleted,
+            "bytes_deleted": bytes_deleted,
+            "total_before_mb": round(total_before / (1024 * 1024), 2),
+            "total_after_mb": round(max(total_after, 0) / (1024 * 1024), 2),
+            "target_mb": round(max_total_size_mb, 2),
+        }
+
+    @staticmethod
     def cleanup_observation(
         observation_id: int,
         image_dir: str | Path = "soap_images",
         result_dir: str | Path = "soap_results",
+        images: bool = True,
+        results: bool = True,
         confirm: bool = True,
     ) -> dict:
         """Clean up all files for a specific observation (static method).
@@ -937,6 +1124,10 @@ class Soap:
             Base directory for images.
         result_dir : str or Path
             Base directory for results.
+        images : bool
+            Remove downloaded FITS images.
+        results : bool
+            Remove generated result files.
         confirm : bool
             Require confirmation before deletion.
 
@@ -945,37 +1136,42 @@ class Soap:
         dict
             Deletion statistics.
         """
-        import shutil
-
         img_path = Path(image_dir) / str(observation_id)
         res_path = Path(result_dir) / str(observation_id)
+        n_img, bytes_img, _ = Soap._dir_stats(img_path)
+        n_res, bytes_res, _ = Soap._dir_stats(res_path)
 
         if confirm:
             msg = f"Delete all files for observation {observation_id}?"
-            if img_path.exists():
+            if images and img_path.exists():
                 msg += f"\n  - {img_path}"
-            if res_path.exists():
+            if results and res_path.exists():
                 msg += f"\n  - {res_path}"
             msg += "\nProceed? (y/n): "
 
             response = input(msg)
             if response.lower() != "y":
-                return {"images_deleted": 0, "results_deleted": 0}
+                return {"images_deleted": 0, "results_deleted": 0, "bytes_deleted": 0}
 
         images_deleted = 0
         results_deleted = 0
+        bytes_deleted = 0
 
-        if img_path.exists():
-            files = list(img_path.glob("*.fits"))
-            images_deleted = len(files)
-            shutil.rmtree(img_path)
+        if images and img_path.exists():
+            images_deleted = n_img
+            bytes_deleted += bytes_img
+            shutil.rmtree(img_path, ignore_errors=True)
 
-        if res_path.exists():
-            files = list(res_path.glob("*"))
-            results_deleted = len([f for f in files if f.is_file()])
-            shutil.rmtree(res_path)
+        if results and res_path.exists():
+            results_deleted = n_res
+            bytes_deleted += bytes_res
+            shutil.rmtree(res_path, ignore_errors=True)
 
-        return {"images_deleted": images_deleted, "results_deleted": results_deleted}
+        return {
+            "images_deleted": images_deleted,
+            "results_deleted": results_deleted,
+            "bytes_deleted": bytes_deleted,
+        }
 
     # ------------------------------------------------------------------
     # Debugging utilities
