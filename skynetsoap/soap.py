@@ -168,7 +168,12 @@ class Soap:
             self.calibrator = DefaultCalibrator(self.config)
 
         # Astrometry solver
-        self.solver = solver
+        if solver is not None:
+            self.solver = solver  # User-provided solver takes precedence
+        elif self.config.astrometry_enabled:
+            self.solver = self._create_default_solver()  # Auto-create from config
+        else:
+            self.solver = None
 
         # Directories
         self.image_dir = Path(image_dir) / str(observation_id)
@@ -179,6 +184,34 @@ class Soap:
         # State
         self._result: PhotometryResult | None = None
         self._api: SkynetAPI | None = None
+
+    def _create_default_solver(self):
+        """Create default HybridAstrometryNetSolver from config.
+
+        Returns
+        -------
+        HybridAstrometryNetSolver
+            Configured hybrid solver instance.
+        """
+        from .astrometry import HybridAstrometryNetSolver
+
+        return HybridAstrometryNetSolver(
+            mode=self.config.astrometry_solver,
+            fallback_enabled=self.config.astrometry_fallback_enabled,
+            local_config={
+                "binary_path": self.config.astrometry_local_binary_path,
+                "timeout": self.config.astrometry_local_timeout,
+                "scale_low": self.config.astrometry_local_scale_low,
+                "scale_high": self.config.astrometry_local_scale_high,
+                "depth": self.config.astrometry_local_depth,
+                "downsample": self.config.astrometry_local_downsample,
+                "extra_args": self.config.astrometry_local_extra_args,
+            },
+            api_config={
+                "api_key": self.config.astrometry_api_key,
+                "timeout": self.config.astrometry_api_timeout,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Properties

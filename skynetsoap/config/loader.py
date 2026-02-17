@@ -70,7 +70,21 @@ class SOAPConfig:
 
     # Astrometry
     astrometry_enabled: bool = False
-    astrometry_timeout: int = 120
+    astrometry_solver: str = "auto"
+    astrometry_fallback_enabled: bool = True
+
+    # Local solver
+    astrometry_local_binary_path: str = "solve-field"
+    astrometry_local_timeout: int = 300
+    astrometry_local_scale_low: float | None = None
+    astrometry_local_scale_high: float | None = None
+    astrometry_local_depth: int | list[int] | None = None
+    astrometry_local_downsample: int | None = None
+    astrometry_local_extra_args: list[str] = field(default_factory=list)
+
+    # API solver
+    astrometry_api_key: str | None = None
+    astrometry_api_timeout: int = 500
 
     # Debugging & Intermediate Products
     debug_mode: bool = False
@@ -154,7 +168,37 @@ class SOAPConfig:
 
         ast = d.get("astrometry", {})
         cfg.astrometry_enabled = ast.get("enabled", cfg.astrometry_enabled)
-        cfg.astrometry_timeout = ast.get("timeout", cfg.astrometry_timeout)
+        cfg.astrometry_solver = ast.get("solver", cfg.astrometry_solver)
+        cfg.astrometry_fallback_enabled = ast.get(
+            "fallback_enabled", cfg.astrometry_fallback_enabled
+        )
+
+        # Local solver config
+        ast_local = ast.get("local", {})
+        cfg.astrometry_local_binary_path = ast_local.get(
+            "binary_path", cfg.astrometry_local_binary_path
+        )
+        cfg.astrometry_local_timeout = ast_local.get(
+            "timeout", cfg.astrometry_local_timeout
+        )
+        cfg.astrometry_local_scale_low = ast_local.get(
+            "scale_low", cfg.astrometry_local_scale_low
+        )
+        cfg.astrometry_local_scale_high = ast_local.get(
+            "scale_high", cfg.astrometry_local_scale_high
+        )
+        cfg.astrometry_local_depth = ast_local.get("depth", cfg.astrometry_local_depth)
+        cfg.astrometry_local_downsample = ast_local.get(
+            "downsample", cfg.astrometry_local_downsample
+        )
+        cfg.astrometry_local_extra_args = ast_local.get(
+            "extra_args", cfg.astrometry_local_extra_args
+        )
+
+        # API solver config
+        ast_api = ast.get("api", {})
+        cfg.astrometry_api_key = ast_api.get("api_key", cfg.astrometry_api_key)
+        cfg.astrometry_api_timeout = ast_api.get("timeout", cfg.astrometry_api_timeout)
 
         dbg = d.get("debug", {})
         cfg.debug_mode = dbg.get("enabled", cfg.debug_mode)

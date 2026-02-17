@@ -40,7 +40,20 @@ random_seed = 0                            # Set <= 0 for nondeterministic behav
 
 [astrometry]
 enabled = false                            # Whether to attempt astrometric solving
-timeout = 500                              # Timeout in seconds for astrometry.net solver
+solver = "auto"                            # "auto", "local", "api", "local_only", "api_only"
+fallback_enabled = true                    # Try fallback solver on failure
+
+[astrometry.local]
+binary_path = "solve-field"                # Path to executable or command name
+timeout = 300                              # Timeout in seconds
+# scale_low and scale_high: omit for auto-detection from FITS header
+# depth: omit to use solve-field default
+# downsample: omit for no downsampling
+extra_args = []                            # Additional command-line arguments
+
+[astrometry.api]
+# api_key: omit to use ASTROMETRY_NET_API_KEY env var
+timeout = 500                              # Timeout in seconds
 
 [logging]
 level = "WARNING"                          # Default logging level
