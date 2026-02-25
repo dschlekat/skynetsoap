@@ -1,6 +1,6 @@
-# SOAP
+# Skynet SOAP
 
-**Science Observation Aperture Photometry** — a field-wide photometry pipeline for [Skynet](https://skynet.unc.edu) observations with automated source extraction, catalog cross-matching, and magnitude calibration.
+**Skynet Science Observation Aperture Photometry** — a field-wide photometry pipeline for [Skynet](https://skynet.unc.edu) observations with automated source extraction, catalog cross-matching, and magnitude calibration.
 
 ## Features
 
