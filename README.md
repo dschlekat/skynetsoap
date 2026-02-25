@@ -7,13 +7,13 @@
 - **sep-based source extraction** with automatic FWHM estimation and configurable aperture selection (FWHM-scaled, optimal, fixed, or multi-aperture)
 - **Multi-aperture photometry** with curve-of-growth analysis for optimal aperture selection
 - **Forced photometry** at user-specified sky positions (for transients, variables, or non-detections)
-- **Limiting magnitude** calculation for all measurements (5-sigma detection threshold)
+- **Limiting magnitude** calculation for all measurements (5-sigma detection threshold), with a robust blank-sky sampling method to handle crowded fields and extended sources
 - **Photometric calibration** via Vizier catalog queries (APASS, PanSTARRS, SkyMapper), Jordi+2006 filter transformations, and inverse-variance weighted zeropoint computation
-- **CCD error model** propagating Poisson noise, read noise, background, and zeropoint uncertainty
+- **Sensor error model** propagating Poisson noise, read noise, background, and zeropoint uncertainty
 - **Field-wide pipeline** — extracts and calibrates all sources per image; single-target lightcurves are a post-processing step
 - **Debugging utilities** — multi-panel diagnostic plots, intermediate product saving
 - **Smart caching** — reuses downloaded images and results across runs
-- **Pluggable backends** — swap calibration or astrometry implementations via Python Protocols
+- **Pluggable backends** — swap calibration or astrometry implementations via the config system
 - **TOML configuration** for filters, catalogs, and pipeline parameters
 - **Multiple export formats** — CSV, ECSV, Parquet, JSON, GCN circular format
 
