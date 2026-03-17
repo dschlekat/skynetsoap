@@ -1,5 +1,7 @@
 # Skynet SOAP
 
+![PyPI version](https://img.shields.io/pypi/v/skynetsoap)
+
 **Skynet Science Observation Aperture Photometry** — a field-wide photometry pipeline for [Skynet](https://skynet.unc.edu) observations with automated source extraction, catalog cross-matching, and magnitude calibration. The pipeline is designed specifically for Skynet data, and requires a Skynet account, API token, and installation of the `skynetapi` Python package to access Skynet's image archive and metadata.
 
 ## Features
