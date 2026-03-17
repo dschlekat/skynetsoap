@@ -1,6 +1,6 @@
 # Skynet SOAP
 
-**Skynet Science Observation Aperture Photometry** — a field-wide photometry pipeline for [Skynet](https://skynet.unc.edu) observations with automated source extraction, catalog cross-matching, and magnitude calibration.
+**Skynet Science Observation Aperture Photometry** — a field-wide photometry pipeline for [Skynet](https://skynet.unc.edu) observations with automated source extraction, catalog cross-matching, and magnitude calibration. The pipeline is designed specifically for Skynet data, and requires a Skynet account, API token, and installation of the `skynetapi` Python package to access Skynet's image archive and metadata.
 
 ## Features
 
@@ -28,8 +28,8 @@ Requires:
 Clone the repository:
 
 ```bash
-git clone https://github.com/dschlekat/soap.git
-cd soap
+git clone https://github.com/dschlekat/skynetsoap.git
+cd skynetsoap
 ```
 
 ### Option 1: uv (recommended)
@@ -43,6 +43,19 @@ Install project dependencies:
 
 ```bash
 uv sync
+```
+
+Install `skynetapi` dependency for Skynet API access:
+
+```bash
+uv pip install skynetsoap
+uv pip install git+https://github.com/astrodyl/skynetapi.git
+```
+
+Set your Skynet API token:
+
+```bash
+export SKYNET_API_TOKEN="your-token-here"
 ```
 
 ### Option 2: native Python venv + pip
@@ -59,6 +72,12 @@ Install the package and dependencies:
 ```bash
 python -m pip install --upgrade pip
 pip install -e .
+```
+
+Install `skynetapi` dependency for Skynet API access:
+
+```bash
+pip install git+https://github.com/astrodyl/skynetapi.git
 ```
 
 Set your Skynet API token:

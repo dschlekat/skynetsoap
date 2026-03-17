@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use Skynet SOAP in research, please cite the software as follows."
+type: software
+title: "Skynet SOAP"
+version: "1.0.0"
+date-released: 2026-03-17
+license: "MIT"
+authors:
+  - family-names: "Schlekat"
+    given-names: "Donovan"
+repository-code: "https://github.com/dschlekat/skynetsoap"
+url: "https://github.com/dschlekat/skynetsoap"
+abstract: >-
+  Skynet Science Observation Aperture Photometry (Skynet SOAP) is a
+  field-wide aperture photometry pipeline for observations made with the
+  Skynet Robotic Telescope Network. It provides automated source extraction,
+  aperture photometry, limiting-magnitude estimation, catalog cross-matching,
+  and photometric calibration, including support for forced photometry and
+  multiple export formats.
+keywords:
+  - astronomy
+  - astrophysics
+  - photometry
+  - aperture photometry
+  - transient astronomy
+  - gamma-ray bursts
+  - Skynet
+  - SEP
