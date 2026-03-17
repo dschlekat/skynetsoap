@@ -23,9 +23,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-skynetapi = [
-    "skynetapi @ git+https://github.com/astrodyl/skynetapi.git",
-]
 astrometry = [
     "astroquery>=0.4",
 ]
