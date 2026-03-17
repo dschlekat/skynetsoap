@@ -45,6 +45,18 @@ Install project dependencies:
 uv sync
 ```
 
+Install optional `skynetapi` dependency for Skynet API access:
+
+```bash
+uv sync --extra skynetapi
+```
+
+Set your Skynet API token:
+
+```bash
+export SKYNET_API_TOKEN="your-token-here"
+```
+
 ### Option 2: native Python venv + pip
 
 Create and activate a virtual environment:
@@ -59,6 +71,12 @@ Install the package and dependencies:
 ```bash
 python -m pip install --upgrade pip
 pip install -e .
+```
+
+Install optional `skynetapi` dependency for Skynet API access:
+
+```bash
+pip install -e .[skynetapi]
 ```
 
 Set your Skynet API token:

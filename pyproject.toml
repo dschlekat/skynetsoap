@@ -19,11 +19,13 @@ dependencies = [
     "pyarrow>=15.0",
     "scipy>=1.14",
     "sep>=1.2",
-    "skynetapi @ git+https://github.com/astrodyl/skynetapi.git",
     "tqdm>=4.60",
 ]
 
 [project.optional-dependencies]
+skynetapi = [
+    "skynetapi @ git+https://github.com/astrodyl/skynetapi.git",
+]
 astrometry = [
     "astroquery>=0.4",
 ]
