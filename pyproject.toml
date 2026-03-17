@@ -1,6 +1,6 @@
 [project]
 name = "skynetsoap"
-version = "2.0.0"
+version = "1.0.0"
 description = "Field-wide aperture photometry pipeline for Skynet observations"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -28,8 +28,8 @@ Requires:
 Clone the repository:
 
 ```bash
-git clone https://github.com/dschlekat/soap.git
-cd soap
+git clone https://github.com/dschlekat/skynetsoap.git
+cd skynetsoap
 ```
 
 ### Option 1: uv (recommended)
