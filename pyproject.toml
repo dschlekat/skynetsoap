@@ -1,6 +1,6 @@
 [project]
 name = "skynetsoap"
-version = "1.0.0"
+version = "1.0.1"
 description = "Field-wide aperture photometry pipeline for Skynet observations"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,6 +19,7 @@ dependencies = [
     "pyarrow>=15.0",
     "scipy>=1.14",
     "sep>=1.2",
+    "skynetapi @ git+https://github.com/astrodyl/skynetapi.git",
     "tqdm>=4.60",
 ]
 
