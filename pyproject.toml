@@ -18,8 +18,8 @@ dependencies = [
     "polars>=1.0",
     "pyarrow>=15.0",
     "scipy>=1.14",
+    "requests>=2.25",
     "sep>=1.2",
-    "skynetapi @ git+https://github.com/astrodyl/skynetapi.git",
     "tqdm>=4.60",
 ]
 
@@ -42,9 +42,6 @@ addopts = "-v -m 'not smoke'"
 markers = [
     "smoke: network-backed opt-in end-to-end smoke tests",
 ]
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["skynetsoap"]

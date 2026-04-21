@@ -1314,16 +1314,8 @@ wheels = [
 ]
 
 [[package]]
-name = "skynetapi"
-version = "0.1.0"
-source = { git = "https://github.com/astrodyl/skynetapi.git#a4d9d56f60351326bdff6db32a6694e78fba56b8" }
-dependencies = [
-    { name = "requests" },
-]
-
-[[package]]
 name = "skynetsoap"
-version = "2.0.0"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "astropy" },
@@ -1333,9 +1325,9 @@ dependencies = [
     { name = "pandas" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "requests" },
     { name = "scipy" },
     { name = "sep" },
-    { name = "skynetapi" },
     { name = "tqdm" },
 ]
 
@@ -1367,9 +1359,9 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=15.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "requests", specifier = ">=2.25" },
     { name = "scipy", specifier = ">=1.14" },
     { name = "sep", specifier = ">=1.2" },
-    { name = "skynetapi", git = "https://github.com/astrodyl/skynetapi.git" },
     { name = "tqdm", specifier = ">=4.60" },
 ]
 provides-extras = ["astrometry", "dev"]

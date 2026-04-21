@@ -8,32 +8,76 @@ from __future__ import annotations
 import logging
 import os
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import requests
 from tqdm import tqdm
 
 logger = logging.getLogger("soap")
+
+_API_BASE = "https://api.skynet.unc.edu/2.0"
+
+
+@dataclass
+class _Exposure:
+    id: int
+    center_time: str | None
+
+
+@dataclass
+class _Observation:
+    name: str
+    exps: list[_Exposure]
 
 
 class SkynetAPI:
     """Download FITS images from Skynet."""
 
     def __init__(self, api_token: str | None = None):
-        from skynetapi import ObservationRequest, DownloadRequest
-
-        self.api_token = api_token or os.getenv("SKYNET_API_TOKEN")
-        if not self.api_token:
+        self._token = api_token or os.getenv("SKYNET_API_TOKEN")
+        if not self._token:
             raise ValueError(
                 "Skynet API token missing. Set SKYNET_API_TOKEN environment variable "
                 "or pass api_token directly."
             )
-        self.observation_request = ObservationRequest(token=self.api_token)
-        self.download_request = DownloadRequest(token=self.api_token)
 
-    def get_observation(self, observation_id: int):
+    def _get_observation(self, obs_id: int) -> _Observation:
+        resp = requests.get(
+            f"{_API_BASE}/obs/{obs_id}",
+            headers={"Authentication-Token": self._token},
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(resp.text)
+        data = resp.json()
+        exps = [
+            _Exposure(id=e["id"], center_time=e.get("centerTime"))
+            for e in data.get("exps", [])
+        ]
+        return _Observation(name=data["name"], exps=exps)
+
+    def _download_fits(self, exp_id: int, out_dir: str) -> str:
+        resp = requests.get(
+            f"{_API_BASE}/download/fits/",
+            headers={"Authentication-Token": self._token},
+            params={"reduceQuiet": 1, "image": f"r{exp_id}"},
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(resp.text)
+        cd = resp.headers.get("Content-Disposition", "")
+        try:
+            fn = cd.split("filename=", 1)[1].strip().strip('"')
+        except IndexError:
+            fn = f"r{exp_id}.fits"
+        file_path = os.path.join(out_dir, fn)
+        with open(file_path, "wb") as f:
+            f.write(resp.content)
+        return file_path
+
+    def get_observation(self, observation_id: int) -> _Observation:
         """Retrieve an observation by ID."""
-        return self.observation_request.get(observation_id)
+        return self._get_observation(observation_id)
 
     @staticmethod
     def _manifest_path(path: Path) -> Path:
@@ -160,9 +204,7 @@ class SkynetAPI:
                 continue
 
             loop.set_description(f"Downloading {exp.id}")
-            filepath = self.download_request.get_fits(
-                out_dir=str(path), reducequiet=1, image=f"r{exp.id}"
-            )
+            filepath = self._download_fits(exp.id, str(path))
             file_path_obj = Path(filepath)
             downloaded.append(file_path_obj)
             if manifest.get(exp_key) != file_path_obj.name:

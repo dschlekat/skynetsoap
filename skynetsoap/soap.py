@@ -829,7 +829,7 @@ class Soap:
         limiting_mag_robust = robust_result.limiting_mag
         context = "forced_photometry" if is_forced else f"aperture_id={aperture_id}"
         for warning_text in robust_result.warnings:
-            self.logger.warning("%s (%s, %s)", warning_text, img_path.name, context)
+            self.logger.debug("%s (%s, %s)", warning_text, img_path.name, context)
 
         self._record_limiting_mag_diagnostic(
             result,

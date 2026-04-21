@@ -309,7 +309,7 @@ skynetsoap/
 If you use Skynet SOAP in your research, please cite the software release:
 
 Schlekat, D. (2026). *Skynet SOAP* (v1.0.0).  
-https://github.com/dschlekat/skynetsoap
+[https://github.com/dschlekat/skynetsoap]
 
 (ASCL entry forthcoming)
 
