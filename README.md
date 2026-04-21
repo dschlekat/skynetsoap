@@ -2,7 +2,7 @@
 
 ![PyPI version](https://img.shields.io/pypi/v/skynetsoap)
 
-**Skynet Science Observation Aperture Photometry** — a field-wide photometry pipeline for [Skynet](https://skynet.unc.edu) observations with automated source extraction, catalog cross-matching, and magnitude calibration. The pipeline is designed specifically for Skynet data, and requires a Skynet account, API token, and installation of the `skynetapi` Python package to access Skynet's image archive and metadata.
+**Skynet Science Observation Aperture Photometry** — a field-wide photometry pipeline for [Skynet](https://skynet.unc.edu) observations with automated source extraction, catalog cross-matching, and magnitude calibration. The pipeline is designed specifically for Skynet data, and requires a Skynet account and API token to access Skynet's image archive and metadata.
 
 ## Features
 
@@ -24,8 +24,21 @@
 Requires:
 
 - Python 3.12+
-- Installation of the [`skynetapi`](https://github.com/astrodyl/skynetapi) Python package
 - A Skynet API token
+
+### Install via pip
+
+```bash
+pip install skynetsoap
+```
+
+Or with `uv`:
+
+```bash
+uv add skynetsoap
+```
+
+### Install from source
 
 Clone the repository:
 
@@ -33,34 +46,6 @@ Clone the repository:
 git clone https://github.com/dschlekat/skynetsoap.git
 cd skynetsoap
 ```
-
-### Option 1: uv (recommended)
-
-Install `uv`:
-
-- Official install guide: <https://docs.astral.sh/uv/getting-started/installation/>
-- GitHub releases: <https://github.com/astral-sh/uv/releases>
-
-Install project dependencies:
-
-```bash
-uv sync
-```
-
-Install `skynetapi` dependency for Skynet API access:
-
-```bash
-uv pip install skynetsoap
-uv pip install git+https://github.com/astrodyl/skynetapi.git
-```
-
-Set your Skynet API token:
-
-```bash
-export SKYNET_API_TOKEN="your-token-here"
-```
-
-### Option 2: native Python venv + pip
 
 Create and activate a virtual environment:
 
@@ -76,11 +61,13 @@ python -m pip install --upgrade pip
 pip install -e .
 ```
 
-Install `skynetapi` dependency for Skynet API access:
+Or with `uv`:
 
 ```bash
-pip install git+https://github.com/astrodyl/skynetapi.git
+uv sync
 ```
+
+### API token
 
 Set your Skynet API token:
 
